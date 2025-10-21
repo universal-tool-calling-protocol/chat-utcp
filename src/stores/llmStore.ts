@@ -20,7 +20,7 @@ interface LLMStore {
 
 const defaultConfig: LLMConfig = {
   provider: "openai",
-  model: "gpt-4-turbo",
+  model: "gpt-4o",
   temperature: 0.7,
   maxTokens: 2000,
   topP: 1,

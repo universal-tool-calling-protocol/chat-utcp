@@ -36,6 +36,24 @@ function App() {
           return;
         }
 
+        // Set environment variables for LangChain (fallback if direct API key passing fails)
+        if (typeof process !== 'undefined' && process.env) {
+          switch (llmConfig.provider) {
+            case "openai":
+              process.env.OPENAI_API_KEY = llmConfig.apiKey;
+              if (llmConfig.organizationId) {
+                process.env.OPENAI_ORGANIZATION = llmConfig.organizationId;
+              }
+              break;
+            case "anthropic":
+              process.env.ANTHROPIC_API_KEY = llmConfig.apiKey;
+              break;
+            case "google":
+              process.env.GOOGLE_API_KEY = llmConfig.apiKey;
+              break;
+          }
+        }
+
         // Create LLM instance based on provider
         let llm: BaseLanguageModel;
         
@@ -46,9 +64,6 @@ function App() {
               openAIApiKey: llmConfig.apiKey,
               temperature: llmConfig.temperature,
               maxTokens: llmConfig.maxTokens,
-              topP: llmConfig.topP,
-              frequencyPenalty: llmConfig.frequencyPenalty,
-              presencePenalty: llmConfig.presencePenalty,
               configuration: {
                 baseURL: llmConfig.baseUrl,
                 organization: llmConfig.organizationId,
@@ -113,7 +128,17 @@ function App() {
     };
 
     initializeAgent();
-  }, [llmConfig, callTemplates, variables]);
+  }, [
+    llmConfig.provider,
+    llmConfig.model,
+    llmConfig.apiKey,
+    llmConfig.baseUrl,
+    llmConfig.organizationId,
+    llmConfig.temperature,
+    llmConfig.maxTokens,
+    callTemplates,
+    variables
+  ]); // Re-init when LLM parameters change (they're baked into the LLM instance)
 
   const handleSendMessage = async (message: string) => {
     if (!agent) {

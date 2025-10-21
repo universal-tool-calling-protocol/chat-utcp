@@ -60,6 +60,9 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
             disabled && "opacity-50 cursor-not-allowed"
           )}
           rows={1}
+          data-grammarly="false"
+          data-enable-grammarly="false"
+          spellCheck="true"
         />
         <Button
           onClick={handleSend}

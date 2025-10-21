@@ -30,7 +30,7 @@ export function Chat({ onSendMessage }: ChatProps) {
         <div>
           <h2 className="text-lg font-semibold">Chat</h2>
           <p className="text-sm text-muted-foreground">
-            Powered by UTCP Agent
+            Powered by UTCP
           </p>
         </div>
         <Button

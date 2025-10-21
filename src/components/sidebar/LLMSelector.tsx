@@ -10,14 +10,32 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Eye, EyeOff } from "lucide-react";
-import { useState } from "react";
+import { Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
 
 export function LLMSelector() {
-  const { config, setProvider, setModel, setApiKey, setBaseUrl, setTemperature, setMaxTokens, setTopP, setFrequencyPenalty, setPresencePenalty, setOrganizationId } = useLLMStore();
+  const { config, setProvider, setModel, setApiKey, setBaseUrl, setTemperature, setMaxTokens, setOrganizationId } = useLLMStore();
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Handle case where stored provider is no longer supported
+  useEffect(() => {
+    const currentProviderInfo = LLM_PROVIDERS[config.provider];
+    if (!currentProviderInfo) {
+      console.warn(`Provider "${config.provider}" is no longer supported. Resetting to OpenAI.`);
+      setProvider("openai");
+      setModel("gpt-4o");
+    }
+  }, [config.provider, setProvider, setModel]);
 
   const currentProviderInfo = LLM_PROVIDERS[config.provider];
+  
+  // Safety check - should not happen after useEffect
+  if (!currentProviderInfo) {
+    return null;
+  }
 
   return (
     <Card>
@@ -86,19 +104,31 @@ export function LLMSelector() {
           </div>
         )}
 
-        {/* Base URL (optional) */}
-        <div className="space-y-2">
-          <Label htmlFor="baseUrl">Base URL (Optional)</Label>
-          <Input
-            id="baseUrl"
-            type="text"
-            value={config.baseUrl || currentProviderInfo.defaultBaseUrl || ""}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder={currentProviderInfo.defaultBaseUrl || "https://api.example.com"}
-          />
-        </div>
+        {/* Advanced Settings Collapsible */}
+        <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+          <CollapsibleTrigger asChild>
+            <Button
+              variant="ghost"
+              className="flex w-full items-center justify-between p-0 hover:bg-transparent"
+            >
+              <span className="text-sm font-medium">Advanced Settings</span>
+              {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pt-4">
+            {/* Base URL (optional) */}
+            <div className="space-y-2">
+              <Label htmlFor="baseUrl">Base URL {config.provider === "openai" ? "(OpenAI only)" : ""}</Label>
+              <Input
+                id="baseUrl"
+                type="text"
+                value={config.baseUrl || currentProviderInfo.defaultBaseUrl || ""}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={currentProviderInfo.defaultBaseUrl || "https://api.example.com"}
+              />
+            </div>
 
-        {/* Temperature */}
+            {/* Temperature */}
         <div className="space-y-2">
           <div className="flex justify-between">
             <Label htmlFor="temperature">Temperature</Label>
@@ -127,67 +157,21 @@ export function LLMSelector() {
           />
         </div>
 
-        {/* Top P */}
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <Label htmlFor="topP">Top P</Label>
-            <span className="text-sm text-muted-foreground">{config.topP?.toFixed(2)}</span>
-          </div>
-          <Slider
-            id="topP"
-            min={0}
-            max={1}
-            step={0.01}
-            value={[config.topP || 1]}
-            onValueChange={(value) => setTopP(value[0])}
-          />
-        </div>
-
-        {/* Frequency Penalty */}
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <Label htmlFor="frequencyPenalty">Frequency Penalty</Label>
-            <span className="text-sm text-muted-foreground">{config.frequencyPenalty?.toFixed(2)}</span>
-          </div>
-          <Slider
-            id="frequencyPenalty"
-            min={-2}
-            max={2}
-            step={0.1}
-            value={[config.frequencyPenalty || 0]}
-            onValueChange={(value) => setFrequencyPenalty(value[0])}
-          />
-        </div>
-
-        {/* Presence Penalty */}
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <Label htmlFor="presencePenalty">Presence Penalty</Label>
-            <span className="text-sm text-muted-foreground">{config.presencePenalty?.toFixed(2)}</span>
-          </div>
-          <Slider
-            id="presencePenalty"
-            min={-2}
-            max={2}
-            step={0.1}
-            value={[config.presencePenalty || 0]}
-            onValueChange={(value) => setPresencePenalty(value[0])}
-          />
-        </div>
-
-        {/* Organization ID (for OpenAI) */}
-        {config.provider === "openai" && (
-          <div className="space-y-2">
-            <Label htmlFor="organizationId">Organization ID (Optional)</Label>
-            <Input
-              id="organizationId"
-              type="text"
-              value={config.organizationId || ""}
-              onChange={(e) => setOrganizationId(e.target.value)}
-              placeholder="org-xxxxxxxxxxxxx"
-            />
-          </div>
-        )}
+            {/* Organization ID (for OpenAI) */}
+            {config.provider === "openai" && (
+              <div className="space-y-2">
+                <Label htmlFor="organizationId">Organization ID (OpenAI only)</Label>
+                <Input
+                  id="organizationId"
+                  type="text"
+                  value={config.organizationId || ""}
+                  onChange={(e) => setOrganizationId(e.target.value)}
+                  placeholder="org-xxxxxxxxxxxxx"
+                />
+              </div>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );
