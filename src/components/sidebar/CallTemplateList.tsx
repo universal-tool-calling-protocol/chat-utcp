@@ -3,24 +3,29 @@
  * Displays registered UTCP call templates
  */
 
-import { useUTCPStore } from "@/stores/utcpStore";
+import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
+import { CallTemplateEditor } from "./CallTemplateEditor";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 export function CallTemplateList() {
-  const { callTemplates, removeCallTemplate } = useUTCPStore();
+  const { getConfig, removeCallTemplate } = useUtcpConfigStore();
+  const config = getConfig();
+  const callTemplates = config.manual_call_templates || [];
 
   const getTemplateTypeBadge = (template: any) => {
-    // Determine template type from properties
-    if (template.http_method) return "HTTP";
-    if (template.command) return "CLI";
-    if (template.sse_url) return "SSE";
-    if (template.server_params) return "MCP";
-    if (template.file_path) return "Text";
-    return "Unknown";
+    // Determine template type from call_template_type property
+    const type = template.call_template_type || "";
+    if (type === "http") return "HTTP";
+    if (type === "cli") return "CLI";
+    if (type === "sse") return "SSE";
+    if (type === "mcp") return "MCP";
+    if (type === "text") return "Text";
+    if (type === "streamable_http") return "HTTP Stream";
+    return type.toUpperCase() || "Unknown";
   };
 
   return (
@@ -31,10 +36,7 @@ export function CallTemplateList() {
             <CardTitle className="text-lg">Call Templates</CardTitle>
             <CardDescription>Registered UTCP tool providers</CardDescription>
           </div>
-          <Button size="sm" variant="outline">
-            <Plus className="h-4 w-4 mr-1" />
-            Add
-          </Button>
+          <CallTemplateEditor />
         </div>
       </CardHeader>
       <CardContent>
@@ -67,7 +69,7 @@ export function CallTemplateList() {
                   <Button
                     size="icon"
                     variant="ghost"
-                    onClick={() => removeCallTemplate(template.name)}
+                    onClick={() => removeCallTemplate(index)}
                     className="ml-2 h-8 w-8"
                   >
                     <Trash2 className="h-4 w-4" />

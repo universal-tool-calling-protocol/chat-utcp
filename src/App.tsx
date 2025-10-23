@@ -8,7 +8,7 @@ import { Sidebar } from "@/components/sidebar/Sidebar";
 import { Chat } from "@/components/chat/Chat";
 import { useChatStore } from "@/stores/chatStore";
 import { useLLMStore } from "@/stores/llmStore";
-import { useUTCPStore } from "@/stores/utcpStore";
+import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
 import { UtcpClient } from "@utcp/sdk";
 import { ChatOpenAI } from "@langchain/openai";
@@ -22,7 +22,7 @@ function App() {
   
   const { addMessage, setStreaming, setCurrentStreamingMessage, updateAgentMetadata } = useChatStore();
   const { config: llmConfig } = useLLMStore();
-  const { callTemplates, variables } = useUTCPStore();
+  const { getConfig: getClientConfig, configDict } = useUtcpConfigStore();
 
   // Initialize UTCP client and agent when config changes
   useEffect(() => {
@@ -94,19 +94,9 @@ function App() {
             return;
         }
 
-        // Create UTCP client
-        const client = await UtcpClient.create(undefined, {
-          variables,
-        });
-        
-        // Register call templates
-        for (const template of callTemplates) {
-          try {
-            await client.registerManual(template);
-          } catch (err) {
-            console.error(`Failed to register template ${template.name}:`, err);
-          }
-        }
+        // Create UTCP client with full configuration
+        const utcpConfig = getClientConfig();
+        const client = await UtcpClient.create(undefined, utcpConfig);
 
         // Create simplified agent (browser-compatible, uses LangChain)
         const newAgent = new SimplifiedUtcpAgent(
@@ -136,9 +126,8 @@ function App() {
     llmConfig.organizationId,
     llmConfig.temperature,
     llmConfig.maxTokens,
-    callTemplates,
-    variables
-  ]); // Re-init when LLM parameters change (they're baked into the LLM instance)
+    configDict,
+  ]); // Re-init when LLM parameters or UTCP config changes
 
   const handleSendMessage = async (message: string) => {
     if (!agent) {
