@@ -165,6 +165,12 @@ export class SimplifiedUtcpAgent {
   private async searchTools(task: string): Promise<Tool[]> {
     try {
       console.log(`[SearchTools] Searching for tools for task: ${task}`);
+      console.log(`Searching for tools with query: '${task}'`);
+      
+      // Debug: Check total registered tools
+      const allTools = await this.utcpClient.config.tool_repository.getTools();
+      console.log(`[SearchTools] Total registered tools: ${allTools.length}`);
+      
       const tools = await this.utcpClient.searchTools(task, this.config.maxToolsPerSearch);
       console.log(`[SearchTools] Found ${tools.length} relevant tools`);
       tools.forEach((tool) => {
@@ -203,9 +209,10 @@ Available tools:
 ${toolsText}
 
 Based on the conversation and available tools, decide what to do next:
-1. If you need to use a tool to accomplish the task, respond with: {"action": "call_tool", "tool_name": "tool.name", "arguments": {"arg1": "value1"}}
-2. If you can answer directly without tools, respond with: {"action": "respond", "message": "your direct response"}
-3. If the conversation is complete, respond with: {"action": "end"}
+1. If you have suitable tools available AND need to use them to accomplish the task, respond with: {"action": "call_tool", "tool_name": "tool.name", "arguments": {"arg1": "value1"}}
+2. If no suitable tools are available OR you can answer directly, respond with: {"action": "respond"}
+
+IMPORTANT: Even if no tools are available, you should ALWAYS choose "respond" to provide a helpful answer to the user. Never choose "end" unless the user explicitly says goodbye or the conversation is truly finished.
 
 Respond ONLY with the JSON object, no other text.`;
 
@@ -222,16 +229,78 @@ Respond ONLY with the JSON object, no other text.`;
     try {
       const response = await this.callLLM(decisionMessages);
       
+      console.log(`[DecideAction] Raw LLM response:`, response);
+      
       // Parse JSON response - try multiple patterns
       try {
-        const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/) || response.match(/(\{[\s\S]*\})/);
-        if (!jsonMatch) {
-          console.warn(`[DecideAction] No JSON found in response, defaulting to respond`);
+        let jsonStr: string | null = null;
+        
+        // First try code block format (flexible with whitespace)
+        const codeBlockMatch = response.match(/```json\s*([\s\S]*?)\s*```/);
+        if (codeBlockMatch) {
+          jsonStr = codeBlockMatch[1].trim();
+          console.log(`[DecideAction] Extracted JSON from code block:`, jsonStr);
+        } else {
+          // Find JSON object by matching braces
+          const firstBrace = response.indexOf('{');
+          if (firstBrace === -1) {
+            console.warn(`[DecideAction] No JSON found in response, defaulting to respond`);
+            return { action: "respond" };
+          }
+          
+          // Find matching closing brace by counting depth
+          let depth = 0;
+          let inString = false;
+          let escape = false;
+          
+          for (let i = firstBrace; i < response.length; i++) {
+            const char = response[i];
+            
+            if (escape) {
+              escape = false;
+              continue;
+            }
+            
+            if (char === '\\') {
+              escape = true;
+              continue;
+            }
+            
+            if (char === '"') {
+              inString = !inString;
+              continue;
+            }
+            
+            if (!inString) {
+              if (char === '{') depth++;
+              if (char === '}') {
+                depth--;
+                if (depth === 0) {
+                  jsonStr = response.substring(firstBrace, i + 1);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        if (!jsonStr) {
+          console.warn(`[DecideAction] Could not extract JSON from response, defaulting to respond`);
           return { action: "respond" };
         }
 
-        const decision = JSON.parse(jsonMatch[1]);
-        const action = decision.action || "respond";
+        console.log(`[DecideAction] Extracted JSON string:`, jsonStr);
+        const decision = JSON.parse(jsonStr);
+        console.log(`[DecideAction] Parsed decision object:`, JSON.stringify(decision, null, 2));
+        let action = decision.action || "respond";
+        
+        // Safety: Convert "end" to "respond" if we haven't provided a proper response yet
+        // "end" should only be used when user explicitly ends conversation
+        if (action === "end") {
+          console.warn(`[DecideAction] Agent chose 'end', converting to 'respond' to provide an answer`);
+          action = "respond";
+          decision.action = "respond";
+        }
         
         // Normalize tool_name to toolName
         if (decision.tool_name) {
@@ -241,6 +310,7 @@ Respond ONLY with the JSON object, no other text.`;
         console.log(`[DecideAction] Agent decision: ${action}`);
         if (action === "call_tool") {
           console.log(`[DecideAction] Selected tool: ${decision.toolName}`);
+          console.log(`[DecideAction] Tool arguments:`, JSON.stringify(decision.arguments, null, 2));
         }
 
         return decision;
@@ -255,7 +325,9 @@ Respond ONLY with the JSON object, no other text.`;
   }
 
   private async executeTool(toolName: string, args: Record<string, any>): Promise<any> {
-    console.log(`[ExecuteTools] Executing tool: ${toolName} with arguments:`, args);
+    console.log(`[ExecuteTools] Executing tool: ${toolName}`);
+    console.log(`[ExecuteTools] Arguments type:`, typeof args, Array.isArray(args) ? '(array)' : '(object)');
+    console.log(`[ExecuteTools] Arguments:`, JSON.stringify(args, null, 2));
     
     try {
       const result = await this.utcpClient.callTool(toolName, args);

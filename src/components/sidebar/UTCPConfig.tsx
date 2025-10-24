@@ -37,6 +37,8 @@ export function UTCPConfig() {
   const [newVarValue, setNewVarValue] = useState("");
   const [importJson, setImportJson] = useState("");
   const [importError, setImportError] = useState("");
+  const [editingVariable, setEditingVariable] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   const handleAddVariable = () => {
     if (newVarKey.trim() && newVarValue.trim()) {
@@ -44,6 +46,22 @@ export function UTCPConfig() {
       setNewVarKey("");
       setNewVarValue("");
     }
+  };
+
+  const handleStartEdit = (key: string, currentValue: string) => {
+    setEditingVariable(key);
+    setEditValue(currentValue);
+  };
+
+  const handleSaveEdit = (key: string) => {
+    addVariable(key, editValue); // addVariable updates if key exists
+    setEditingVariable(null);
+    setEditValue("");
+  };
+
+  const handleCancelEdit = () => {
+    setEditingVariable(null);
+    setEditValue("");
   };
 
   const handleImport = () => {
@@ -99,15 +117,55 @@ export function UTCPConfig() {
                     <div className="text-sm font-mono truncate" title={key}>
                       {key}
                     </div>
-                    <div className="text-sm font-mono text-muted-foreground truncate" title={value}>
-                      {value}
-                    </div>
+                    {editingVariable === key ? (
+                      <div className="flex gap-1">
+                        <Input
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveEdit(key);
+                            if (e.key === 'Escape') handleCancelEdit();
+                          }}
+                          className="h-6 text-xs font-mono"
+                          autoFocus
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-green-600 hover:text-green-700"
+                          onClick={() => handleSaveEdit(key)}
+                          title="Save"
+                        >
+                          ✓
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-red-600 hover:text-red-700"
+                          onClick={handleCancelEdit}
+                          title="Cancel"
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    ) : (
+                      <div
+                        className="text-sm font-mono text-muted-foreground truncate cursor-pointer hover:bg-muted/80 px-1 rounded"
+                        title={`${value} (click to edit)`}
+                        onClick={() => handleStartEdit(key, value)}
+                      >
+                        {value || <span className="italic text-muted-foreground/50">empty</span>}
+                      </div>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => removeVariable(key)}
+                    onClick={() => {
+                      if (editingVariable === key) handleCancelEdit();
+                      removeVariable(key);
+                    }}
                   >
                     <X className="h-3 w-3" />
                   </Button>

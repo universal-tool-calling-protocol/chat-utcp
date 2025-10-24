@@ -15,11 +15,11 @@ import { Plus, FileJson, MessageSquare, Settings2, Loader2, CheckCircle, XCircle
 import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
 import { useLLMStore } from "@/stores/llmStore";
 import { useCallTemplateGenerator } from "@/hooks/useCallTemplateGenerator";
-import { CallTemplateSerializer, ensureCorePluginsInitialized, UtcpClient, UtcpClientConfigSerializer } from "@utcp/sdk";
+import { createUtcpClientWithAutoVariables } from "@/utils/utcpClientHelper";
+import { CallTemplateSerializer, UtcpClientConfigSerializer } from "@utcp/sdk";
 
-import '@utcp/http'
-
-type CallTemplateType = 'http' | 'sse' | 'streamable_http' | 'mcp' | 'text';
+// Protocol plugins are now imported globally in main.tsx
+type CallTemplateType = 'http' | 'sse' | 'streamable_http' | 'text';
 type InputMethod = 'form' | 'json' | 'natural_language';
 
 export function CallTemplateEditor() {
@@ -28,7 +28,7 @@ export function CallTemplateEditor() {
   const [templateType, setTemplateType] = useState<CallTemplateType>('http');
   const [error, setError] = useState("");
   const [isValidating, setIsValidating] = useState(false);
-  const { addCallTemplate, getConfig } = useUtcpConfigStore();
+  const { addCallTemplate, addVariable, getConfig } = useUtcpConfigStore();
   const { config: llmConfig } = useLLMStore();
   const { state: generatorState, generateTemplate, reset: resetGenerator } = useCallTemplateGenerator();
 
@@ -58,12 +58,9 @@ export function CallTemplateEditor() {
   const [chunkSize, setChunkSize] = useState(4096);
   const [timeout, setTimeout] = useState(60000);
 
-  // MCP fields
-  const [mcpConfig, setMcpConfig] = useState("");
-  const [registerResourcesAsTools, setRegisterResourcesAsTools] = useState(false);
-
   // Text fields
   const [textContent, setTextContent] = useState("");
+  const [textBaseUrl, setTextBaseUrl] = useState("");
 
   const resetForm = () => {
     setInputMethod('form');
@@ -79,9 +76,8 @@ export function CallTemplateEditor() {
     setRetryTimeout(30000);
     setChunkSize(4096);
     setTimeout(60000);
-    setMcpConfig("");
-    setRegisterResourcesAsTools(false);
     setTextContent("");
+    setTextBaseUrl("");
     setJsonInput("");
     setNaturalLanguageInput("");
     setError("");
@@ -192,19 +188,12 @@ export function CallTemplateEditor() {
           body_field: bodyField || null,
           header_fields: parseArray(headerFields) || null,
         };
-      } else if (templateType === 'mcp') {
-        const parsedConfig = JSON.parse(mcpConfig || '{"mcpServers":{}}');
-        template = {
-          name: name || undefined,
-          call_template_type: 'mcp',
-          config: parsedConfig,
-          register_resources_as_tools: registerResourcesAsTools,
-        };
       } else if (templateType === 'text') {
         template = {
           name: name || undefined,
           call_template_type: 'text',
           content: textContent,
+          base_url: textBaseUrl || undefined,
         };
       } else {
         setError("Invalid template type");
@@ -219,9 +208,18 @@ export function CallTemplateEditor() {
         tempConfig.manual_call_templates.push(new CallTemplateSerializer().validateDict(template));
 
         // Try to create a client with the new config - this validates the template
-        await UtcpClient.create(undefined, tempConfig);
+        // and automatically detects/adds any missing variables
+        await createUtcpClientWithAutoVariables(
+          undefined,
+          tempConfig,
+          (addedVariables) => {
+            // Save auto-detected variables to the config store
+            console.log('[CallTemplateEditor] Auto-detected variables:', addedVariables);
+            addedVariables.forEach(varName => addVariable(varName, ''));
+          }
+        );
         
-        // If we got here, the template is valid - add it to config
+        // If we got here, the template is valid - add it
         addCallTemplate(template);
         resetForm();
         setOpen(false);
@@ -399,6 +397,11 @@ For now, try downloading the spec file and pasting it in a "text" template inste
                             <span className="text-green-600">Template validated successfully!</span>
                           </>
                         )}
+                        {step.type === 'response' && (
+                          <div className="flex-1 text-sm whitespace-pre-wrap bg-muted/50 p-2 rounded">
+                            {step.message}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -428,6 +431,27 @@ For now, try downloading the spec file and pasting it in a "text" template inste
                   </Button>
                 </div>
               )}
+
+              {/* Show error/final response when generation fails */}
+              {!generatorState.finalTemplate && !generatorState.isGenerating && generatorState.error && (
+                <div className="space-y-3 p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <XCircle className="h-5 w-5" />
+                    <span className="font-medium">Generation Failed</span>
+                  </div>
+                  <div className="text-sm whitespace-pre-wrap text-muted-foreground">
+                    {generatorState.error}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => resetGenerator()}
+                    className="w-full"
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -445,8 +469,7 @@ For now, try downloading the spec file and pasting it in a "text" template inste
                 <SelectItem value="http">HTTP - RESTful APIs</SelectItem>
                 <SelectItem value="sse">SSE - Server-Sent Events</SelectItem>
                 <SelectItem value="streamable_http">Streamable HTTP - Chunked Transfer</SelectItem>
-                <SelectItem value="mcp">MCP - Model Context Protocol</SelectItem>
-                <SelectItem value="text">Text - Static JSON/YAML Manual</SelectItem>
+                <SelectItem value="text">Text - Static JSON/YAML/OpenAPI Manual</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -466,20 +489,34 @@ For now, try downloading the spec file and pasting it in a "text" template inste
 
           {/* Text: Content */}
           {templateType === 'text' && (
-            <div className="space-y-2">
-              <Label>UTCP Manual Content *</Label>
-              <Textarea
-                value={textContent}
-                onChange={(e) => setTextContent(e.target.value)}
-                placeholder={'{\n  "tools": [\n    {\n      "name": "my_tool",\n      "description": "Tool description",\n      "input_schema": {...},\n      "output_schema": {...}\n    }\n  ]\n}'}
-                rows={12}
-                className="font-mono text-xs"
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                Paste UTCP manual JSON or OpenAPI spec as text content
-              </p>
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label>UTCP Manual Content *</Label>
+                <Textarea
+                  value={textContent}
+                  onChange={(e) => setTextContent(e.target.value)}
+                  placeholder={'{\n  "tools": [\n    {\n      "name": "my_tool",\n      "description": "Tool description",\n      "input_schema": {...},\n      "output_schema": {...}\n    }\n  ]\n}'}
+                  rows={12}
+                  className="font-mono text-xs"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Paste UTCP manual JSON or OpenAPI spec as text content
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Base URL (optional)</Label>
+                <Input
+                  value={textBaseUrl}
+                  onChange={(e) => setTextBaseUrl(e.target.value)}
+                  placeholder="https://api.example.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Base URL for API endpoints when using OpenAPI specs. Overrides spec's server configuration.
+                </p>
+              </div>
+            </>
           )}
 
           {/* HTTP, SSE, Streamable HTTP: URL */}
@@ -631,37 +668,6 @@ For now, try downloading the spec file and pasting it in a "text" template inste
             </>
           )}
 
-          {/* MCP: Config */}
-          {templateType === 'mcp' && (
-            <>
-              <div className="space-y-2">
-                <Label>MCP Configuration *</Label>
-                <Textarea
-                  value={mcpConfig}
-                  onChange={(e) => setMcpConfig(e.target.value)}
-                  placeholder={'{\n  "mcpServers": {\n    "myserver": {\n      "transport": "stdio",\n      "command": "node",\n      "args": ["server.js"]\n    }\n  }\n}'}
-                  rows={8}
-                  className="font-mono text-xs"
-                />
-                <p className="text-xs text-muted-foreground">
-                  JSON configuration with mcpServers object
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="register-resources"
-                  checked={registerResourcesAsTools}
-                  onChange={(e) => setRegisterResourcesAsTools(e.target.checked)}
-                  className="rounded"
-                />
-                <Label htmlFor="register-resources" className="text-sm font-normal cursor-pointer">
-                  Register resources as tools
-                </Label>
-              </div>
-            </>
-          )}
             </>
           )}
 

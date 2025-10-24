@@ -4,7 +4,7 @@
  */
 
 import { useState } from "react";
-import { UtcpClient } from "@utcp/sdk";
+import { UtcpClient, UtcpManualSerializer, type Tool, type UtcpManual } from "@utcp/sdk";
 import { addFunctionToUtcpDirectCall } from "@utcp/direct-call";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
 import { ChatOpenAI } from "@langchain/openai";
@@ -13,17 +13,20 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { BaseLanguageModel } from "@langchain/core/language_models/base";
 import type { LLMConfig } from "@/types/llm.types";
 import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
+import { TextCallTemplateSerializer } from "@utcp/text";
 
 export type GenerationStep = 
   | { type: 'thinking'; message: string }
   | { type: 'attempting'; template: Record<string, unknown> }
   | { type: 'error'; error: string; template: Record<string, unknown> }
-  | { type: 'success'; template: Record<string, unknown> };
+  | { type: 'success'; template: Record<string, unknown>; requiredVariables?: string[] }
+  | { type: 'response'; message: string };
 
 export interface CallTemplateGeneratorState {
   isGenerating: boolean;
   steps: GenerationStep[];
   finalTemplate: Record<string, unknown> | null;
+  requiredVariables: string[];
   error: string | null;
 }
 
@@ -32,6 +35,7 @@ export function useCallTemplateGenerator() {
     isGenerating: false,
     steps: [],
     finalTemplate: null,
+    requiredVariables: [],
     error: null,
   });
 
@@ -42,6 +46,7 @@ export function useCallTemplateGenerator() {
       isGenerating: true,
       steps: [{ type: 'thinking', message: 'Analyzing your API description...' }],
       finalTemplate: null,
+      requiredVariables: [],
       error: null,
     });
 
@@ -103,164 +108,195 @@ export function useCallTemplateGenerator() {
 
       // Create simplified agent
       const agent = new SimplifiedUtcpAgent(llm, client, {
-        maxIterations: 10, // Allow multiple attempts to fix errors
+        maxIterations: 5, // Allow multiple attempts to fix errors
         maxToolsPerSearch: 20,
-        systemPrompt: `You are an expert at creating UTCP call template configurations.
-Your job is to understand the user's API description and create a valid UTCP call template.
+        systemPrompt: `You are an expert at creating UTCP manuals from API documentation.
 
-## Available Template Types:
-- **http**: For RESTful APIs with standard HTTP methods. Can also point to OpenAPI spec URLs for automatic conversion.
-- **sse**: For Server-Sent Events streaming APIs
-- **streamable_http**: For HTTP APIs with chunked transfer encoding
-- **mcp**: For Model Context Protocol servers
-- **text**: For static JSON/YAML UTCP manuals or OpenAPI specs
+Your only tool is create_utcp_manual. 
 
-## Variable Substitution System:
+CRITICAL: Pass an OBJECT with a "tools" property, NOT a direct array!
 
-UTCP supports dynamic variable substitution using \${VAR_NAME} or $VAR_NAME syntax.
+Call it like this:
 
-**Variable Resolution Hierarchy:**
-1. Configuration variables (from config.variables)
-2. Custom variable loaders (e.g., from .env files)
-3. Environment variables
-
-**Variable Namespacing:**
-Variables in call templates are automatically namespaced with the template name to avoid conflicts.
-- Template name "my_api" with variable "API_KEY" becomes "my__api_API_KEY"
-- Single underscores in names are doubled: "web_scraper" → "web__scraper"
-
-**Examples:**
-\`\`\`json
 {
-  "name": "github_api",
-  "url": "https://api.github.com/repos/\${OWNER}/\${REPO}",
+  "tools": [
+    {
+      "name": "tool_name",
+      "description": "What it does",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "param": {"type": "string", "description": "..."}
+        },
+        "required": ["param"]
+      },
+      "outputs": {
+        "type": "object",
+        "properties": {
+          "result": {"type": "string"}
+        }
+      },
+      "tags": ["category1", "category2"],  // REQUIRED: array of strings
+      "tool_call_template": {
+        "name": "provider",
+        "call_template_type": "http",
+        "http_method": "GET",
+        "url": "https://api.example.com/endpoint?param={param}",
+        "content_type": "application/json"
+      }
+    }
+  ]
+}
+
+## Call Template Types
+
+**HTTP** (most common for REST APIs):
+{
+  "name": "provider",
+  "call_template_type": "http",
+  "http_method": "GET|POST|PUT|DELETE|PATCH",
+  "url": "https://api.example.com/path?param={param}",
+  "content_type": "application/json",  // default: application/json
+  "headers": {"X-Custom": "value"},  // optional, auth is handled separately
+  "body_field": "body",  // optional, input field for request body
+  "header_fields": ["auth_header"],  // optional, input fields to send as headers
+  "auth": {...}  // optional, see Auth section below
+}
+
+**SSE** (Server-Sent Events streaming):
+{
+  "name": "provider",
+  "call_template_type": "sse",
+  "url": "https://api.example.com/stream",
+  "event_type": null,  // optional, filter specific event types
+  "reconnect": true,  // default: true
+  "retry_timeout": 30000,  // default: 30000ms
+  "headers": {},  // optional
+  "body_field": null,  // optional
+  "header_fields": null  // optional
+}
+
+**Streamable HTTP** (chunked transfer encoding):
+{
+  "name": "provider",
+  "call_template_type": "streamable_http",
+  "url": "https://api.example.com/stream",
+  "http_method": "GET|POST",
+  "content_type": "application/octet-stream",  // default
+  "chunk_size": 4096,  // default: 4096 bytes
+  "timeout": 60000,  // default: 60000ms
+  "headers": {},  // optional
+  "body_field": null,  // optional
+  "header_fields": null  // optional
+}
+
+Use {param} in URLs to inject input parameters!
+
+## Authentication
+
+Add "auth" field to tool_call_template for authenticated APIs:
+
+**API Key** (most common):
+{
   "auth": {
     "auth_type": "api_key",
-    "api_key": "Bearer \${API_KEY}",
-    "var_name": "Authorization",
-    "location": "header"
+    "api_key": "\${API_KEY}",  // use variable substitution!
+    "var_name": "X-Api-Key",  // default: X-Api-Key
+    "location": "header"  // "header"|"query"|"cookie", default: header
   }
 }
-\`\`\`
 
-Variables referenced: github__api_OWNER, github__api_REPO, github__api_API_KEY
-
-## Authentication Configuration:
-
-### 1. API Key Authentication (most common):
-\`\`\`json
+**Basic Auth**:
 {
-  "auth_type": "api_key",
-  "api_key": "Bearer \${API_KEY}",  // Can use variables!
-  "var_name": "Authorization",     // Header name, default: "X-Api-Key"
-  "location": "header"             // "header" or "query", default: "header"
-}
-\`\`\`
-
-**Common patterns:**
-- Bearer token: \`"api_key": "Bearer \${TOKEN}"\`
-- Simple API key: \`"api_key": "\${API_KEY}"\`
-- Custom prefix: \`"api_key": "ApiKey \${KEY}"\`
-
-### 2. Basic Authentication:
-\`\`\`json
-{
-  "auth_type": "basic",
-  "username": "\${USERNAME}",
-  "password": "\${PASSWORD}"
-}
-\`\`\`
-
-### 3. OAuth2 Authentication:
-\`\`\`json
-{
-  "auth_type": "oauth2",
-  "client_id": "\${CLIENT_ID}",
-  "client_secret": "\${CLIENT_SECRET}",
-  "token_url": "https://oauth.example.com/token",
-  "scope": "read write"
-}
-\`\`\`
-
-## Complete HTTP Template Example:
-\`\`\`json
-{
-  "name": "openai_api",
-  "call_template_type": "http",
-  "url": "https://api.openai.com/v1/chat/completions",
-  "http_method": "POST",
-  "content_type": "application/json",
   "auth": {
-    "auth_type": "api_key",
-    "api_key": "Bearer \${API_KEY}",
-    "var_name": "Authorization",
-    "location": "header"
-  },
-  "headers": {
-    "X-Custom-Header": "value"
-  },
-  "body_field": "body"
-}
-\`\`\`
-
-## OpenAPI Spec Templates:
-
-**IMPORTANT: Browser CORS Limitation**
-When running in a browser, HTTP requests to external domains may be blocked by CORS. For OpenAPI specs:
-- If the API doesn't allow CORS from your domain, use **text** template instead
-- Download the OpenAPI spec JSON and paste it in a text template
-
-**HTTP template** (for APIs with CORS enabled):
-\`\`\`json
-{
-  "name": "petstore",
-  "call_template_type": "http",
-  "url": "https://petstore3.swagger.io/api/v3/openapi.json",
-  "http_method": "GET",
-  "auth_tools": {
-    "auth_type": "api_key",
-    "api_key": "\${API_KEY}",
-    "var_name": "api_key",
-    "location": "query"
+    "auth_type": "basic",
+    "username": "\${USERNAME}",
+    "password": "\${PASSWORD}"
   }
 }
-\`\`\`
 
-**Text template** (recommended for browser environments):
-\`\`\`json
+**OAuth2** (Client Credentials):
 {
-  "name": "petstore",
-  "call_template_type": "text",
-  "content": "{ \"openapi\": \"3.0.0\", ... }"
+  "auth": {
+    "auth_type": "oauth2",
+    "token_url": "https://auth.example.com/token",
+    "client_id": "\${CLIENT_ID}",
+    "client_secret": "\${CLIENT_SECRET}",
+    "scope": "read write"  // optional
+  }
 }
-\`\`\`
 
-Note: \`auth\` is for fetching the spec, \`auth_tools\` is for the converted tools.
+Always use \${VAR} for secrets!
 
-## Common Validation Errors:
-1. **Missing required fields**: Ensure url, http_method (for http), callable_name (for direct) are present
-2. **Invalid URLs**: Must include protocol (https://)
-3. **Auth without variables**: Always use \${VAR} syntax for sensitive data
-4. **Wrong auth_type**: Must be "api_key", "basic", or "oauth2"
-5. **Missing auth fields**: api_key auth needs api_key field, basic needs username & password
+CRITICAL REQUIREMENTS:
+1. "inputs" and "outputs" are SIBLINGS, NOT nested!
+   WRONG: {"inputs": {"properties": {...}, "outputs": {...}}}
+   RIGHT: {"inputs": {...}, "outputs": {...}}
 
-## Testing Process:
-1. Call the appropriate test_*_template tool with your configuration
-2. If it returns success: true, you're done!
-3. If it returns success: false, read the error message carefully
-4. Fix the specific issue mentioned in the error
-5. Test again with the corrected configuration
+2. "tags" field is REQUIRED (array of strings for categorization)
+   Example: "tags": ["weather", "api"]
 
-You have tools to test each template type. Keep trying until you get a working template!`,
+3. Pass an OBJECT to create_utcp_manual, NOT an array!
+   WRONG: create_utcp_manual([{tool1}, {tool2}])
+   RIGHT: create_utcp_manual({"tools": [{tool1}, {tool2}]})
+
+Process:
+1. Parse API docs → create manual object with tools array
+2. Call create_utcp_manual({"tools": [...]}) - note the object wrapper!
+3. If error → read the suggestion and fix
+4. If success → respond with the template in a JSON code block
+
+Use create_utcp_manual now!`,
       });
 
       // Run the agent
       let latestTemplate: Record<string, unknown> | null = null;
+      let finalResponse: string | null = null;
       const newSteps: GenerationStep[] = [...state.steps];
 
-      for await (const step of agent.stream(naturalLanguageDescription)) {
+      // Create a task-oriented prompt that forces tool use
+      const taskPrompt = `Create a UTCP manual for this API using the create_utcp_manual tool:
+
+${naturalLanguageDescription}
+
+INSTRUCTIONS:
+1. Build a UTCP manual JSON object with tools based on the API documentation above
+2. Call create_utcp_manual with the format: {"tools": [...your tools...]}
+   IMPORTANT: Pass an OBJECT with "tools" property, NOT a direct array!
+3. If you get an error, read the suggestion carefully and fix it
+4. Return the final template in a JSON code block when successful
+
+Start by calling create_utcp_manual({"tools": [...]}) now!`;
+
+      let requiredVariables: string[] = [];
+      
+      for await (const step of agent.stream(taskPrompt)) {
+        // Capture tool execution results
+        if (step.step === 'execute' && step.data?.result) {
+          const result = step.data.result;
+          console.log('[Generator] Tool execution result:', result);
+          
+          // Check if it's a successful template creation
+          if (result.success && result.template) {
+            console.log('[Generator] Found successful template in tool result');
+            latestTemplate = result.template;
+            requiredVariables = result.requiredVariables || [];
+            newSteps.push({ 
+              type: 'success', 
+              template: result.template,
+              requiredVariables: requiredVariables 
+            });
+          } else if (!result.success) {
+            console.log('[Generator] Tool returned error:', result.error);
+            newSteps.push({ type: 'error', error: result.error || 'Unknown error', template: {} });
+          }
+        }
+        
         if (step.step === 'respond' && step.data?.response) {
-          // Check if response contains a working template
+          finalResponse = step.data.response;
+          newSteps.push({ type: 'response', message: step.data.response });
+          
+          // Also check if response contains a working template (fallback)
           try {
             const response = step.data.response;
             const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/);
@@ -280,15 +316,18 @@ You have tools to test each template type. Keep trying until you get a working t
           isGenerating: false,
           steps: newSteps,
           finalTemplate: latestTemplate,
+          requiredVariables: requiredVariables,
           error: null,
         });
         return latestTemplate;
       } else {
-        const err = 'Failed to generate a valid template';
+        // Show the agent's final response even if no template was generated
+        const err = finalResponse || 'Failed to generate a valid template. The AI could not create a working configuration.';
         setState({
           isGenerating: false,
           steps: newSteps,
           finalTemplate: null,
+          requiredVariables: [],
           error: err,
         });
         throw new Error(err);
@@ -298,6 +337,7 @@ You have tools to test each template type. Keep trying until you get a working t
         isGenerating: false,
         steps: state.steps,
         finalTemplate: null,
+        requiredVariables: [],
         error: err.message,
       });
       return null;
@@ -311,6 +351,7 @@ You have tools to test each template type. Keep trying until you get a working t
       isGenerating: false,
       steps: [],
       finalTemplate: null,
+      requiredVariables: [],
       error: null,
     }),
   };
@@ -320,197 +361,236 @@ You have tools to test each template type. Keep trying until you get a working t
  * Get the UTCP manual for template testing tools
  */
 function getTemplateToolsManual() {
-  return {
+  const manualDict = {
     tools: [
       {
-        name: 'test_http_template',
-        description: 'Test and validate an HTTP call template configuration. Returns success:true if valid, or error details if invalid.',
-        input_schema: {
+        name: 'create_utcp_manual',
+        description: 'Create and validate a UTCP manual, then automatically wrap it in a text call template. Pass a UTCP manual JSON object. Returns the complete text template if valid, or error details if invalid.',
+        inputs: {
           type: 'object',
           properties: {
-            name: { type: 'string', description: 'Template name (optional)' },
-            http_method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], description: 'HTTP method' },
-            url: { type: 'string', description: 'URL (can include path parameters like /users/{user_id})' },
-            content_type: { type: 'string', description: 'Content type, default: application/json' },
-            headers: { type: 'object', description: 'Optional headers' },
-            body_field: { type: 'string', description: 'Optional body field name' },
-            header_fields: { type: 'array', items: { type: 'string' }, description: 'Optional header field names' },
+            tools: { 
+              type: 'array', 
+              description: 'Array of tools. Each tool must have: name, description, inputs (JSON Schema), outputs (JSON Schema), tags (array), and tool_call_template (with call_template_type, http_method, url, etc.)',
+              items: { type: 'object' }
+            },
+            utcp_version: { type: 'string', description: 'UTCP version (optional, defaults to 1.0.0)' },
+            manual_version: { type: 'string', description: 'Manual version (optional, defaults to 1.0.0)' },
           },
-          required: ['http_method', 'url'],
+          required: ['tools'],
         },
-        output_schema: { type: 'object' },
-        provider: { name: 'template_tools', call_template_type: 'direct-call', callable_name: 'test_http_template' },
-      },
-      {
-        name: 'test_sse_template',
-        description: 'Test and validate an SSE (Server-Sent Events) call template configuration. Returns success:true if valid, or error details if invalid.',
-        input_schema: {
+        outputs: { 
           type: 'object',
           properties: {
-            name: { type: 'string', description: 'Template name (optional)' },
-            url: { type: 'string', description: 'SSE endpoint URL' },
-            event_type: { type: 'string', description: 'Optional event type to filter' },
-            reconnect: { type: 'boolean', description: 'Whether to reconnect on disconnect' },
-            retry_timeout: { type: 'number', description: 'Retry timeout in milliseconds' },
-            headers: { type: 'object', description: 'Optional headers' },
-            body_field: { type: 'string', description: 'Optional body field name' },
-            header_fields: { type: 'array', items: { type: 'string' }, description: 'Optional header field names' },
-          },
-          required: ['url'],
+            success: { type: 'boolean' },
+            template: { type: 'object', description: 'The complete text call template (only if success is true)' },
+            error: { type: 'string', description: 'Error message (only if success is false)' },
+            suggestion: { type: 'string', description: 'Suggestion for fixing the error (only if success is false)' }
+          }
         },
-        output_schema: { type: 'object' },
-        provider: { name: 'template_tools', call_template_type: 'direct-call', callable_name: 'test_sse_template' },
-      },
-      {
-        name: 'test_streamable_http_template',
-        description: 'Test and validate a Streamable HTTP call template configuration. Returns success:true if valid, or error details if invalid.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Template name (optional)' },
-            url: { type: 'string', description: 'HTTP streaming endpoint URL' },
-            http_method: { type: 'string', enum: ['GET', 'POST'], description: 'HTTP method' },
-            content_type: { type: 'string', description: 'Content type' },
-            chunk_size: { type: 'number', description: 'Chunk size in bytes' },
-            timeout: { type: 'number', description: 'Timeout in milliseconds' },
-            headers: { type: 'object', description: 'Optional headers' },
-            body_field: { type: 'string', description: 'Optional body field name' },
-            header_fields: { type: 'array', items: { type: 'string' }, description: 'Optional header field names' },
-          },
-          required: ['url'],
-        },
-        output_schema: { type: 'object' },
-        provider: { name: 'template_tools', call_template_type: 'direct-call', callable_name: 'test_streamable_http_template' },
-      },
-      {
-        name: 'test_mcp_template',
-        description: 'Test and validate an MCP (Model Context Protocol) call template configuration. Returns success:true if valid, or error details if invalid.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Template name (optional)' },
-            config: { type: 'object', description: 'MCP server configuration with mcpServers object' },
-            register_resources_as_tools: { type: 'boolean', description: 'Whether to register resources as tools' },
-          },
-          required: ['config'],
-        },
-        output_schema: { type: 'object' },
-        provider: { name: 'template_tools', call_template_type: 'direct-call', callable_name: 'test_mcp_template' },
-      },
-      {
-        name: 'test_text_template',
-        description: 'Test and validate a Text call template configuration for static UTCP manuals or OpenAPI specs. Returns success:true if valid, or error details if invalid.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Template name (optional)' },
-            content: { type: 'string', description: 'UTCP manual JSON or OpenAPI spec as text' },
-          },
-          required: ['content'],
-        },
-        output_schema: { type: 'object' },
-        provider: { name: 'template_tools', call_template_type: 'direct-call', callable_name: 'test_text_template' },
+        tool_call_template: { name: 'template_tools', call_template_type: 'direct-call', callable_name: 'create_utcp_manual' },
       },
     ],
   };
+  
+  return new UtcpManualSerializer().validateDict(manualDict);
 }
 
 /**
- * Register direct call tools for testing each template type
+ * Register the create_utcp_manual tool
  */
 function registerTemplateTools(getConfig: () => any) {
 
-  // Implement actual validation functions
-  const testTemplate = async (template: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    try {
-      const currentConfig = getConfig();
-      const tempConfig = {
-        ...currentConfig,
-        manual_call_templates: [
-          ...(currentConfig.manual_call_templates || []),
-          template as any,
-        ],
-      };
+  addFunctionToUtcpDirectCall('create_utcp_manual', async (tools: Tool[], utcp_version: string, manual_version: string) => {
+    console.log('[create_utcp_manual] Received manual:', JSON.stringify(tools, null, 2));
+    
+    // Build the UTCP manual with defaults
+    const utcpManual = {
+      utcp_version: utcp_version || '1.0.0',
+      manual_version: manual_version || '1.0.0',
+      tools: tools || [],
+    };
 
-      // Try to create client - this validates the template
-      await UtcpClient.create(undefined, tempConfig);
+    console.log('[create_utcp_manual] Built manual with', utcpManual.tools.length, 'tools');
+
+    // Validate UTCP manual structure
+    try {
+      // Check if it's a valid UTCP manual
+      if (!Array.isArray(utcpManual.tools)) {
+        return {
+          success: false,
+          error: 'The "tools" field must be an array',
+          suggestion: 'Pass an array of tool objects in the "tools" field',
+        };
+      }
+
+      // Validate each tool
+      for (let i = 0; i < utcpManual.tools.length; i++) {
+        const tool = utcpManual.tools[i];
+        console.log(`[create_utcp_manual] Validating tool ${i}:`, tool.name);
+
+        if (!tool.name) {
+          return {
+            success: false,
+            error: `Tool at index ${i} is missing required field "name"`,
+            suggestion: 'Each tool must have a name field',
+          };
+        }
+
+        if (!tool.description) {
+          return {
+            success: false,
+            error: `Tool "${tool.name}" is missing required field "description"`,
+            suggestion: 'Each tool must have a description field',
+          };
+        }
+
+        if (!tool.inputs) {
+          return {
+            success: false,
+            error: `Tool "${tool.name}" is missing required field "inputs"`,
+            suggestion: 'Each tool must have an inputs field with JSON Schema',
+          };
+        }
+
+        if (!tool.outputs) {
+          return {
+            success: false,
+            error: `Tool "${tool.name}" is missing required field "outputs"`,
+            suggestion: 'Each tool must have an outputs field with JSON Schema. Make sure "outputs" is at the same level as "inputs", not nested inside it!',
+          };
+        }
+
+        // Check if outputs is accidentally nested in inputs
+        if (tool.inputs && typeof tool.inputs === 'object' && 'outputs' in tool.inputs) {
+          return {
+            success: false,
+            error: `Tool "${tool.name}" has "outputs" nested inside "inputs" - this is incorrect!`,
+            suggestion: 'The "outputs" field must be at the same level as "inputs", not inside it. Tool structure: { "name": "...", "inputs": {...}, "outputs": {...}, "tool_call_template": {...} }',
+          };
+        }
+
+        if (!tool.tool_call_template) {
+          return {
+            success: false,
+            error: `Tool "${tool.name}" is missing required field "tool_call_template"`,
+            suggestion: 'Each tool must have a tool_call_template field specifying how to call the API',
+          };
+        }
+
+        if (!tool.tags || !Array.isArray(tool.tags)) {
+          return {
+            success: false,
+            error: `Tool "${tool.name}" is missing required field "tags"`,
+            suggestion: 'Each tool must have a "tags" field with an array of strings for categorization',
+          };
+        }
+      }
+
+      console.log('[create_utcp_manual] All tools validated, creating text template');
+
+      // Stringify the manual for the text template content
+      const manualContent = JSON.stringify(utcpManual);
+      console.log('[create_utcp_manual] Manual content:', manualContent);
+
+      // Create the text template
+      // Generate a name from the first tool's name (before the dot if namespaced)
+      const generatedName = utcpManual.tools[0]?.name?.split('.')[0] || 'api_manual';
+      const template = new TextCallTemplateSerializer().validateDict({
+        name: generatedName,
+        call_template_type: 'text',
+        content: manualContent,
+      });
+
+      // Test the template with UTCP client
+      const currentConfig = getConfig();
+      
+      // Try to register the manual to detect required variables
+      let requiredVariables: string[] = [];
+      let testClient: UtcpClient;
+      
+      try {
+        // First attempt - might fail due to missing variables
+        testClient = await UtcpClient.create(undefined, currentConfig);
+        await testClient.registerManual(template);
+        console.log('[create_utcp_manual] Manual registered successfully on first try');
+      } catch (error: any) {
+        console.log('[create_utcp_manual] First registration failed, detecting variables from error');
+        
+        // Check if it's a variable not found error
+        const variableMatch = error.message?.match(/Variable '([^']+)'/);
+        if (variableMatch) {
+          console.log('[create_utcp_manual] Detected missing variable error');
+          
+          // Get all required variables for this template using the fixed method
+          const tempClient = await UtcpClient.create(undefined, currentConfig);
+          requiredVariables = await tempClient.getRequiredVariablesForManualAndTools(template);
+          console.log('[create_utcp_manual] All required variables:', requiredVariables);
+          
+          // Create config with all required variables set to empty strings
+          const tempConfig = {
+            ...currentConfig,
+            variables: {
+              ...(currentConfig.variables || {}),
+              ...Object.fromEntries(requiredVariables.map(v => [v, ''])),
+            },
+          };
+          
+          console.log('[create_utcp_manual] Temp config variables:', Object.keys(tempConfig.variables || {}));
+          
+          // Retry with variables
+          try {
+            testClient = await UtcpClient.create(undefined, tempConfig);
+            console.log('[create_utcp_manual] Test client created with temp config');
+            await testClient.registerManual(template);
+            console.log('[create_utcp_manual] Manual registered successfully after adding variables:', requiredVariables.join(', '));
+          } catch (retryError: any) {
+            console.error('[create_utcp_manual] Retry failed with error:', retryError.message);
+            throw retryError;
+          }
+        } else {
+          throw error;
+        }
+      }
+      
+      const registeredTools = await testClient.getTools();
+      console.log('[create_utcp_manual] Manual registered, tools count:', registeredTools.length);
+      
+      if (registeredTools.length === 0) {
+        return {
+          success: false,
+          error: 'Manual was created but no tools were registered. The tools may have failed validation.',
+          suggestion: 'Check that all tool_call_template fields are valid. Make sure "name", "call_template_type", and protocol-specific fields (like "http_method", "url" for HTTP) are present.',
+        };
+      }
       
       return {
         success: true,
-        message: 'Template is valid!',
         template,
+        requiredVariables,
+        message: `Manual is valid and wrapped in text template! ${registeredTools.length} tool(s) registered. Required variables: ${requiredVariables.join(', ') || 'none'}`,
       };
     } catch (err: any) {
+      // Extract detailed error information
+      let errorDetails = err.message || String(err);
+      
+      // Try to extract Zod validation errors
+      if (err.issues && Array.isArray(err.issues)) {
+        errorDetails = err.issues.map((issue: any) => 
+          `${issue.path.join('.')}: ${issue.message}`
+        ).join('; ');
+      }
+      
+      // Limit error length but keep it informative
+      if (errorDetails.length > 500) {
+        errorDetails = errorDetails.substring(0, 500) + '...';
+      }
+      
       return {
         success: false,
-        error: err.message || String(err),
-        template,
-        suggestion: 'Fix the error and try again with corrected values.',
+        error: errorDetails,
+        suggestion: 'Check the error message above and fix the specific fields mentioned. Common issues: missing required fields, invalid URL format, or incorrect field types.',
       };
     }
-  };
-
-  addFunctionToUtcpDirectCall('test_http_template', async (args: any) => {
-    const template = {
-      name: args.name,
-      call_template_type: 'http',
-      http_method: args.http_method,
-      url: args.url,
-      content_type: args.content_type || 'application/json',
-      headers: args.headers,
-      body_field: args.body_field,
-      header_fields: args.header_fields,
-    };
-    return testTemplate(template);
-  });
-
-  addFunctionToUtcpDirectCall('test_sse_template', async (args: any) => {
-    const template = {
-      name: args.name,
-      call_template_type: 'sse',
-      url: args.url,
-      event_type: args.event_type || null,
-      reconnect: args.reconnect !== undefined ? args.reconnect : true,
-      retry_timeout: args.retry_timeout || 30000,
-      headers: args.headers,
-      body_field: args.body_field || null,
-      header_fields: args.header_fields || null,
-    };
-    return testTemplate(template);
-  });
-
-  addFunctionToUtcpDirectCall('test_streamable_http_template', async (args: any) => {
-    const template = {
-      name: args.name,
-      call_template_type: 'streamable_http',
-      url: args.url,
-      http_method: args.http_method || 'GET',
-      content_type: args.content_type || 'application/json',
-      chunk_size: args.chunk_size || 4096,
-      timeout: args.timeout || 60000,
-      headers: args.headers,
-      body_field: args.body_field || null,
-      header_fields: args.header_fields || null,
-    };
-    return testTemplate(template);
-  });
-
-  addFunctionToUtcpDirectCall('test_mcp_template', async (args: any) => {
-    const template = {
-      name: args.name,
-      call_template_type: 'mcp',
-      config: args.config,
-      register_resources_as_tools: args.register_resources_as_tools || false,
-    };
-    return testTemplate(template);
-  });
-
-  addFunctionToUtcpDirectCall('test_text_template', async (args: any) => {
-    const template = {
-      name: args.name,
-      call_template_type: 'text',
-      content: args.content,
-    };
-    return testTemplate(template);
   });
 }

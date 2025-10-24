@@ -10,7 +10,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { useLLMStore } from "@/stores/llmStore";
 import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
-import { UtcpClient } from "@utcp/sdk";
+import { createUtcpClientWithAutoVariables } from "@/utils/utcpClientHelper";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
@@ -22,7 +22,7 @@ function App() {
   
   const { addMessage, setStreaming, setCurrentStreamingMessage, updateAgentMetadata } = useChatStore();
   const { config: llmConfig } = useLLMStore();
-  const { getConfig: getClientConfig, configDict } = useUtcpConfigStore();
+  const { getConfig: getClientConfig, configDict, addVariable } = useUtcpConfigStore();
 
   // Initialize UTCP client and agent when config changes
   useEffect(() => {
@@ -96,14 +96,22 @@ function App() {
 
         // Create UTCP client with full configuration
         const utcpConfig = getClientConfig();
-        const client = await UtcpClient.create(undefined, utcpConfig);
+        const client = await createUtcpClientWithAutoVariables(
+          undefined,
+          utcpConfig,
+          (addedVariables) => {
+            // Save newly detected variables to the config store
+            console.log('[App] Auto-detected and adding variables:', addedVariables);
+            addedVariables.forEach(varName => addVariable(varName, ''));
+          }
+        );
 
         // Create simplified agent (browser-compatible, uses LangChain)
         const newAgent = new SimplifiedUtcpAgent(
           llm,
           client,
           {
-            maxIterations: 3,
+            maxIterations: 5,
             maxToolsPerSearch: 10,
             systemPrompt: "You are a helpful AI assistant with access to tools through UTCP.",
             summarizeThreshold: 80000,

@@ -1,6 +1,13 @@
 // Import process polyfill FIRST before any other imports
 import './polyfills/process'
 
+// Register all UTCP protocol plugins BEFORE app renders
+// This ensures serializers are registered before config validation
+// Note: @utcp/file and @utcp/mcp are Node.js-only and not imported in browser environment
+import '@utcp/http'
+import '@utcp/text'
+import '@utcp/direct-call'
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'

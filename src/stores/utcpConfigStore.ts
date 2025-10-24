@@ -57,8 +57,16 @@ export const useUtcpConfigStore = create<UtcpConfigStoreState>()(
 
       getConfig: () => {
         const { configDict } = get();
-        // Use SDK serializer to validate and convert
-        return configSerializer.validateDict(configDict);
+        try {
+          // Use SDK serializer to validate and convert
+          return configSerializer.validateDict(configDict);
+        } catch (error) {
+          console.error("Invalid config in localStorage, resetting to defaults:", error);
+          // Reset to default config if validation fails
+          const defaultDict = getDefaultConfigDict();
+          set({ configDict: defaultDict });
+          return configSerializer.validateDict(defaultDict);
+        }
       },
 
       getConfigDict: () => {
@@ -91,8 +99,6 @@ export const useUtcpConfigStore = create<UtcpConfigStoreState>()(
       },
 
       addCallTemplate: (templateDict) => {
-        const config = get().getConfig();
-        const newTemplates = [...config.manual_call_templates];
         // Let SDK validate the template
         const validatedTemplate = configSerializer.validateDict({
           ...get().configDict,
