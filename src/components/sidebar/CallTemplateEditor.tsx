@@ -62,6 +62,30 @@ export function CallTemplateEditor() {
   const [textContent, setTextContent] = useState("");
   const [textBaseUrl, setTextBaseUrl] = useState("");
 
+  // Auth fields (for connection/request)
+  const [authType, setAuthType] = useState<'none' | 'api_key' | 'basic' | 'oauth2'>('none');
+  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [apiKeyVarName, setApiKeyVarName] = useState("X-Api-Key");
+  const [apiKeyLocation, setApiKeyLocation] = useState<'header' | 'query' | 'cookie'>('header');
+  const [basicUsername, setBasicUsername] = useState("");
+  const [basicPassword, setBasicPassword] = useState("");
+  const [oauth2TokenUrl, setOauth2TokenUrl] = useState("");
+  const [oauth2ClientId, setOauth2ClientId] = useState("");
+  const [oauth2ClientSecret, setOauth2ClientSecret] = useState("");
+  const [oauth2Scope, setOauth2Scope] = useState("");
+
+  // Auth tools fields (for generated tools from OpenAPI/Text)
+  const [authToolsType, setAuthToolsType] = useState<'none' | 'api_key' | 'basic' | 'oauth2'>('none');
+  const [authToolsApiKeyValue, setAuthToolsApiKeyValue] = useState("");
+  const [authToolsApiKeyVarName, setAuthToolsApiKeyVarName] = useState("X-Api-Key");
+  const [authToolsApiKeyLocation, setAuthToolsApiKeyLocation] = useState<'header' | 'query' | 'cookie'>('header');
+  const [authToolsBasicUsername, setAuthToolsBasicUsername] = useState("");
+  const [authToolsBasicPassword, setAuthToolsBasicPassword] = useState("");
+  const [authToolsOauth2TokenUrl, setAuthToolsOauth2TokenUrl] = useState("");
+  const [authToolsOauth2ClientId, setAuthToolsOauth2ClientId] = useState("");
+  const [authToolsOauth2ClientSecret, setAuthToolsOauth2ClientSecret] = useState("");
+  const [authToolsOauth2Scope, setAuthToolsOauth2Scope] = useState("");
+
   const resetForm = () => {
     setInputMethod('form');
     setName("");
@@ -81,6 +105,26 @@ export function CallTemplateEditor() {
     setJsonInput("");
     setNaturalLanguageInput("");
     setError("");
+    setAuthType('none');
+    setApiKeyValue("");
+    setApiKeyVarName("X-Api-Key");
+    setApiKeyLocation('header');
+    setBasicUsername("");
+    setBasicPassword("");
+    setOauth2TokenUrl("");
+    setOauth2ClientId("");
+    setOauth2ClientSecret("");
+    setOauth2Scope("");
+    setAuthToolsType('none');
+    setAuthToolsApiKeyValue("");
+    setAuthToolsApiKeyVarName("X-Api-Key");
+    setAuthToolsApiKeyLocation('header');
+    setAuthToolsBasicUsername("");
+    setAuthToolsBasicPassword("");
+    setAuthToolsOauth2TokenUrl("");
+    setAuthToolsOauth2ClientId("");
+    setAuthToolsOauth2ClientSecret("");
+    setAuthToolsOauth2Scope("");
     resetGenerator();
   };
 
@@ -105,6 +149,78 @@ export function CallTemplateEditor() {
   const parseArray = (str: string): string[] | undefined => {
     if (!str.trim()) return undefined;
     return str.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  };
+
+  const buildAuthObject = (): Record<string, unknown> | undefined => {
+    if (authType === 'none') return undefined;
+    
+    if (authType === 'api_key') {
+      if (!apiKeyValue.trim()) return undefined;
+      return {
+        auth_type: 'api_key',
+        api_key: apiKeyValue,
+        var_name: apiKeyVarName || 'X-Api-Key',
+        location: apiKeyLocation,
+      };
+    }
+    
+    if (authType === 'basic') {
+      if (!basicUsername.trim() || !basicPassword.trim()) return undefined;
+      return {
+        auth_type: 'basic',
+        username: basicUsername,
+        password: basicPassword,
+      };
+    }
+    
+    if (authType === 'oauth2') {
+      if (!oauth2TokenUrl.trim() || !oauth2ClientId.trim() || !oauth2ClientSecret.trim()) return undefined;
+      return {
+        auth_type: 'oauth2',
+        token_url: oauth2TokenUrl,
+        client_id: oauth2ClientId,
+        client_secret: oauth2ClientSecret,
+        ...(oauth2Scope.trim() && { scope: oauth2Scope }),
+      };
+    }
+    
+    return undefined;
+  };
+
+  const buildAuthToolsObject = (): Record<string, unknown> | undefined => {
+    if (authToolsType === 'none') return undefined;
+    
+    if (authToolsType === 'api_key') {
+      if (!authToolsApiKeyValue.trim()) return undefined;
+      return {
+        auth_type: 'api_key',
+        api_key: authToolsApiKeyValue,
+        var_name: authToolsApiKeyVarName || 'X-Api-Key',
+        location: authToolsApiKeyLocation,
+      };
+    }
+    
+    if (authToolsType === 'basic') {
+      if (!authToolsBasicUsername.trim() || !authToolsBasicPassword.trim()) return undefined;
+      return {
+        auth_type: 'basic',
+        username: authToolsBasicUsername,
+        password: authToolsBasicPassword,
+      };
+    }
+    
+    if (authToolsType === 'oauth2') {
+      if (!authToolsOauth2TokenUrl.trim() || !authToolsOauth2ClientId.trim() || !authToolsOauth2ClientSecret.trim()) return undefined;
+      return {
+        auth_type: 'oauth2',
+        token_url: authToolsOauth2TokenUrl,
+        client_id: authToolsOauth2ClientId,
+        client_secret: authToolsOauth2ClientSecret,
+        ...(authToolsOauth2Scope.trim() && { scope: authToolsOauth2Scope }),
+      };
+    }
+    
+    return undefined;
   };
 
   const handleSubmit = async () => {
@@ -159,6 +275,8 @@ export function CallTemplateEditor() {
           http_method: httpMethod,
           url,
           content_type: contentType,
+          auth: buildAuthObject(),
+          auth_tools: buildAuthToolsObject(),
           headers: parseHeaders(headers),
           body_field: bodyField || undefined,
           header_fields: parseArray(headerFields),
@@ -168,6 +286,7 @@ export function CallTemplateEditor() {
           name: name || undefined,
           call_template_type: 'sse',
           url,
+          auth: buildAuthObject(),
           event_type: eventType || null,
           reconnect,
           retry_timeout: retryTimeout,
@@ -182,6 +301,7 @@ export function CallTemplateEditor() {
           url,
           http_method: httpMethod === 'GET' || httpMethod === 'POST' ? httpMethod : 'GET',
           content_type: contentType,
+          auth: buildAuthObject(),
           chunk_size: chunkSize,
           timeout,
           headers: parseHeaders(headers),
@@ -194,6 +314,7 @@ export function CallTemplateEditor() {
           call_template_type: 'text',
           content: textContent,
           base_url: textBaseUrl || undefined,
+          auth_tools: buildAuthToolsObject(),
         };
       } else {
         setError("Invalid template type");
@@ -566,6 +687,258 @@ For now, try downloading the spec file and pasting it in a "text" template inste
                 value={contentType}
                 onChange={(e) => setContentType(e.target.value)}
               />
+            </div>
+          )}
+
+          {/* HTTP, SSE, Streamable HTTP: Connection Authentication */}
+          {(templateType === 'http' || templateType === 'sse' || templateType === 'streamable_http') && (
+            <div className="space-y-3 p-3 bg-muted/50 rounded-lg border border-border">
+              <Label className="font-semibold">Connection Authentication (optional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Authentication for accessing the API endpoint
+              </p>
+              <Select value={authType} onValueChange={(value: any) => setAuthType(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="api_key">API Key</SelectItem>
+                  <SelectItem value="basic">Basic Auth</SelectItem>
+                  <SelectItem value="oauth2">OAuth2</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* API Key Auth */}
+              {authType === 'api_key' && (
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">API Key Value *</Label>
+                    <Input
+                      value={apiKeyValue}
+                      onChange={(e) => setApiKeyValue(e.target.value)}
+                      placeholder="sk-... or $API_KEY_VAR"
+                      type="password"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Can be a literal value or variable like $MY_API_KEY
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Variable Name</Label>
+                    <Input
+                      value={apiKeyVarName}
+                      onChange={(e) => setApiKeyVarName(e.target.value)}
+                      placeholder="X-Api-Key"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Header name or query parameter name
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Location</Label>
+                    <Select value={apiKeyLocation} onValueChange={(value: any) => setApiKeyLocation(value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="header">Header</SelectItem>
+                        <SelectItem value="query">Query Parameter</SelectItem>
+                        <SelectItem value="cookie">Cookie</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* Basic Auth */}
+              {authType === 'basic' && (
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">Username *</Label>
+                    <Input
+                      value={basicUsername}
+                      onChange={(e) => setBasicUsername(e.target.value)}
+                      placeholder="username or $USERNAME_VAR"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Password *</Label>
+                    <Input
+                      value={basicPassword}
+                      onChange={(e) => setBasicPassword(e.target.value)}
+                      placeholder="password or $PASSWORD_VAR"
+                      type="password"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* OAuth2 Auth */}
+              {authType === 'oauth2' && (
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">Token URL *</Label>
+                    <Input
+                      value={oauth2TokenUrl}
+                      onChange={(e) => setOauth2TokenUrl(e.target.value)}
+                      placeholder="https://oauth.example.com/token"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Client ID *</Label>
+                    <Input
+                      value={oauth2ClientId}
+                      onChange={(e) => setOauth2ClientId(e.target.value)}
+                      placeholder="client_id or $CLIENT_ID_VAR"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Client Secret *</Label>
+                    <Input
+                      value={oauth2ClientSecret}
+                      onChange={(e) => setOauth2ClientSecret(e.target.value)}
+                      placeholder="client_secret or $CLIENT_SECRET_VAR"
+                      type="password"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Scope (optional)</Label>
+                    <Input
+                      value={oauth2Scope}
+                      onChange={(e) => setOauth2Scope(e.target.value)}
+                      placeholder="read write"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* HTTP & Text: Auth Tools for Generated Tools */}
+          {(templateType === 'http' || templateType === 'text') && (
+            <div className="space-y-3 p-3 bg-muted/50 rounded-lg border border-border">
+              <Label className="font-semibold">Auth Tools for Generated Tools (optional)</Label>
+              <p className="text-xs text-muted-foreground">
+                {templateType === 'http' 
+                  ? 'Authentication to apply to tools generated from OpenAPI specs'
+                  : 'Authentication to apply to tools generated from OpenAPI specs in the text content'}
+              </p>
+              <Select value={authToolsType} onValueChange={(value: any) => setAuthToolsType(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="api_key">API Key</SelectItem>
+                  <SelectItem value="basic">Basic Auth</SelectItem>
+                  <SelectItem value="oauth2">OAuth2</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* API Key Auth Tools */}
+              {authToolsType === 'api_key' && (
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">API Key Value *</Label>
+                    <Input
+                      value={authToolsApiKeyValue}
+                      onChange={(e) => setAuthToolsApiKeyValue(e.target.value)}
+                      placeholder="sk-... or $API_KEY_VAR"
+                      type="password"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Can be a literal value or variable like $MY_API_KEY
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Variable Name</Label>
+                    <Input
+                      value={authToolsApiKeyVarName}
+                      onChange={(e) => setAuthToolsApiKeyVarName(e.target.value)}
+                      placeholder="X-Api-Key"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Header name or query parameter name
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Location</Label>
+                    <Select value={authToolsApiKeyLocation} onValueChange={(value: any) => setAuthToolsApiKeyLocation(value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="header">Header</SelectItem>
+                        <SelectItem value="query">Query Parameter</SelectItem>
+                        <SelectItem value="cookie">Cookie</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* Basic Auth Tools */}
+              {authToolsType === 'basic' && (
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">Username *</Label>
+                    <Input
+                      value={authToolsBasicUsername}
+                      onChange={(e) => setAuthToolsBasicUsername(e.target.value)}
+                      placeholder="username or $USERNAME_VAR"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Password *</Label>
+                    <Input
+                      value={authToolsBasicPassword}
+                      onChange={(e) => setAuthToolsBasicPassword(e.target.value)}
+                      placeholder="password or $PASSWORD_VAR"
+                      type="password"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* OAuth2 Auth Tools */}
+              {authToolsType === 'oauth2' && (
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm">Token URL *</Label>
+                    <Input
+                      value={authToolsOauth2TokenUrl}
+                      onChange={(e) => setAuthToolsOauth2TokenUrl(e.target.value)}
+                      placeholder="https://oauth.example.com/token"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Client ID *</Label>
+                    <Input
+                      value={authToolsOauth2ClientId}
+                      onChange={(e) => setAuthToolsOauth2ClientId(e.target.value)}
+                      placeholder="client_id or $CLIENT_ID_VAR"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Client Secret *</Label>
+                    <Input
+                      value={authToolsOauth2ClientSecret}
+                      onChange={(e) => setAuthToolsOauth2ClientSecret(e.target.value)}
+                      placeholder="client_secret or $CLIENT_SECRET_VAR"
+                      type="password"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Scope (optional)</Label>
+                    <Input
+                      value={authToolsOauth2Scope}
+                      onChange={(e) => setAuthToolsOauth2Scope(e.target.value)}
+                      placeholder="read write"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

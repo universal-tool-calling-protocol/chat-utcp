@@ -6,8 +6,8 @@ import path from 'path'
 export default defineConfig({
   plugins: [react()],
   // Configure base path for GitHub Pages
-  // Change 'chat-utcp' to your actual repository name if different
-  base: process.env.NODE_ENV === 'production' ? '/chat-utcp/' : '/',
+  // Using custom domain (chat.utcp.io), so base is always '/'
+  base: '/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

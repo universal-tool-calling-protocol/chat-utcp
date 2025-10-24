@@ -4,7 +4,7 @@
  */
 
 import { useState } from "react";
-import { UtcpClient, UtcpManualSerializer, type Tool, type UtcpManual } from "@utcp/sdk";
+import { UtcpClient, UtcpManualSerializer, type Tool } from "@utcp/sdk";
 import { addFunctionToUtcpDirectCall } from "@utcp/direct-call";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
 import { ChatOpenAI } from "@langchain/openai";

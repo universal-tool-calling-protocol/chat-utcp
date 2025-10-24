@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { LLMSelector } from "./LLMSelector";
 import { UTCPConfig } from "./UTCPConfig";
 import { CallTemplateList } from "./CallTemplateList";
-import { GripVertical } from "lucide-react";
+import { GripVertical, AlertCircle } from "lucide-react";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 800;
@@ -76,6 +76,17 @@ export function Sidebar() {
           <CallTemplateList />
         </div>
       </ScrollArea>
+
+      {/* CORS Disclaimer */}
+      <div className="p-3 border-t bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900">
+        <div className="flex gap-2 text-xs text-amber-900 dark:text-amber-200">
+          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold mb-1">This is a fully Browser-based App</p>
+            <p>Some HTTP tools may not work due to CORS restrictions. Use UTCP server-side or locally for full compatibility.</p>
+          </div>
+        </div>
+      </div>
       
       {/* Resize Handle */}
       <div
