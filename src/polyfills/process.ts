@@ -24,11 +24,11 @@ const getEnvStorage = () => {
 
 // Create a Proxy for env that persists values in the global window object
 const envProxy = new Proxy({} as Record<string, string | undefined>, {
-  get: (target, prop: string) => {
+  get: (_target, prop: string) => {
     const storage = getEnvStorage();
     return storage[prop];
   },
-  set: (target, prop: string, value: any) => {
+  set: (_target, prop: string, value: any) => {
     const storage = getEnvStorage();
     storage[prop] = value;
     return true;
