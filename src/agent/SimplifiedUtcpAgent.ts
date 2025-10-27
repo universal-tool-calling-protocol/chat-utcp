@@ -36,6 +36,7 @@ export class SimplifiedUtcpAgent {
   private utcpClient: UtcpClient;
   private config: Required<AgentConfig>;
   private messages: BaseMessage[] = [];
+  private systemMessage: SystemMessage;
 
   constructor(llm: BaseLanguageModel, utcpClient: UtcpClient, config?: AgentConfig) {
     console.log("Initializing SimplifiedUtcpAgent");
@@ -47,12 +48,17 @@ export class SimplifiedUtcpAgent {
       systemPrompt: config?.systemPrompt || "You are a helpful AI assistant.",
       summarizeThreshold: config?.summarizeThreshold || 80000,
     };
+    this.systemMessage = new SystemMessage(this.config.systemPrompt);
     console.log("SimplifiedUtcpAgent initialization complete");
   }
 
   async *stream(userInput: string): AsyncGenerator<AgentStep> {
+    // Preserve previous messages and add new user input
+    // Remove old system message if it exists and add the current one
+    const nonSystemMessages = this.messages.filter(m => m._getType() !== "system");
     this.messages = [
-      new SystemMessage(this.config.systemPrompt),
+      this.systemMessage,
+      ...nonSystemMessages,
       new HumanMessage(userInput),
     ];
 

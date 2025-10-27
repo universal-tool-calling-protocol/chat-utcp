@@ -74,7 +74,7 @@ export function useCallTemplateGenerator() {
         case "openai":
           llm = new ChatOpenAI({
             modelName: llmConfig.model,
-            openAIApiKey: llmConfig.apiKey,
+            apiKey: llmConfig.apiKey,
             temperature: 0.2, // Lower temperature for more consistent output
             maxTokens: llmConfig.maxTokens,
             configuration: {
@@ -87,7 +87,7 @@ export function useCallTemplateGenerator() {
         case "anthropic":
           llm = new ChatAnthropic({
             modelName: llmConfig.model,
-            anthropicApiKey: llmConfig.apiKey,
+            apiKey: llmConfig.apiKey,
             temperature: 0.2,
             maxTokens: llmConfig.maxTokens,
           });

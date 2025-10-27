@@ -4,6 +4,7 @@ import type { LLMConfig, LLMProvider } from "@/types/llm.types";
 
 interface LLMStore {
   config: LLMConfig;
+  isHydrated: boolean;
   setProvider: (provider: LLMProvider) => void;
   setModel: (model: string) => void;
   setApiKey: (apiKey: string) => void;
@@ -32,6 +33,7 @@ export const useLLMStore = create<LLMStore>()(
   persist(
     (set) => ({
       config: defaultConfig,
+      isHydrated: false,
       setProvider: (provider) =>
         set((state) => ({ config: { ...state.config, provider } })),
       setModel: (model) =>
@@ -58,6 +60,11 @@ export const useLLMStore = create<LLMStore>()(
     }),
     {
       name: "llm-config-storage",
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.isHydrated = true;
+        }
+      },
     }
   )
 );

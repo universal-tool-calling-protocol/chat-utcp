@@ -21,7 +21,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   
   const { addMessage, setStreaming, setCurrentStreamingMessage, updateAgentMetadata } = useChatStore();
-  const { config: llmConfig } = useLLMStore();
+  const { config: llmConfig, isHydrated } = useLLMStore();
   const { getConfig: getClientConfig, configDict, addVariable } = useUtcpConfigStore();
 
   // Initialize UTCP client and agent when config changes
@@ -29,6 +29,11 @@ function App() {
     const initializeAgent = async () => {
       try {
         setError(null);
+        
+        // Wait for store to hydrate from localStorage
+        if (!isHydrated) {
+          return;
+        }
         
         // Validate LLM configuration
         if (!llmConfig.apiKey) {
@@ -61,7 +66,7 @@ function App() {
           case "openai":
             llm = new ChatOpenAI({
               modelName: llmConfig.model,
-              openAIApiKey: llmConfig.apiKey,
+              apiKey: llmConfig.apiKey,
               temperature: llmConfig.temperature,
               maxTokens: llmConfig.maxTokens,
               configuration: {
@@ -74,7 +79,7 @@ function App() {
           case "anthropic":
             llm = new ChatAnthropic({
               modelName: llmConfig.model,
-              anthropicApiKey: llmConfig.apiKey,
+              apiKey: llmConfig.apiKey,
               temperature: llmConfig.temperature,
               maxTokens: llmConfig.maxTokens,
             });
@@ -127,6 +132,7 @@ function App() {
 
     initializeAgent();
   }, [
+    isHydrated,
     llmConfig.provider,
     llmConfig.model,
     llmConfig.apiKey,

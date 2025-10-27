@@ -6,16 +6,31 @@
 declare global {
   interface Window {
     process: NodeJS.Process;
+    __processEnv?: Record<string, string | undefined>;
   }
 }
 
-// Create a Proxy for env that always returns undefined but doesn't throw errors
+// Create a persistent environment object that can be accessed globally
+// This ensures API keys set in the app are accessible to LangChain libraries
+const getEnvStorage = () => {
+  if (typeof window !== 'undefined') {
+    if (!window.__processEnv) {
+      window.__processEnv = {};
+    }
+    return window.__processEnv;
+  }
+  return {};
+};
+
+// Create a Proxy for env that persists values in the global window object
 const envProxy = new Proxy({} as Record<string, string | undefined>, {
   get: (target, prop: string) => {
-    return target[prop];
+    const storage = getEnvStorage();
+    return storage[prop];
   },
   set: (target, prop: string, value: any) => {
-    target[prop] = value;
+    const storage = getEnvStorage();
+    storage[prop] = value;
     return true;
   },
 });
