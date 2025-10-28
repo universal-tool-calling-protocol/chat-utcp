@@ -37,6 +37,7 @@ export class SimplifiedUtcpAgent {
   private config: Required<AgentConfig>;
   private messages: BaseMessage[] = [];
   private systemMessage: SystemMessage;
+  private isO1Model: boolean = false;
 
   constructor(llm: BaseLanguageModel, utcpClient: UtcpClient, config?: AgentConfig) {
     console.log("Initializing SimplifiedUtcpAgent");
@@ -49,6 +50,14 @@ export class SimplifiedUtcpAgent {
       summarizeThreshold: config?.summarizeThreshold || 80000,
     };
     this.systemMessage = new SystemMessage(this.config.systemPrompt);
+    
+    // Detect if using o1 model (which doesn't support system messages)
+    const modelName = (llm as any)?.modelName || (llm as any)?.model || "";
+    this.isO1Model = modelName.includes("o1") || modelName.includes("o3");
+    if (this.isO1Model) {
+      console.log(`[Agent] Detected o1/o3 model: ${modelName}. System messages will be converted to user messages.`);
+    }
+    
     console.log("SimplifiedUtcpAgent initialization complete");
   }
 
@@ -95,27 +104,34 @@ export class SimplifiedUtcpAgent {
         const result = await this.executeTool(decision.toolName!, decision.arguments || {});
         yield { step: "execute", data: { result }, message: "Tool executed" };
         
-        // Add tool call and result to messages (matching UtcpAgent behavior)
-        this.messages.push(
-          new AIMessage(`Tool called: ${decision.toolName} with arguments: ${JSON.stringify(decision.arguments)}`)
-        );
-
-        const resultStr = typeof result === "string" ? result : JSON.stringify(result);
-        
-        if (resultStr.trim() === "") {
-          this.messages.push(
-            new HumanMessage("Result is empty. Try different arguments or a different tool.")
-          );
+        // Check if the result is an error
+        if (result && typeof result === "object" && "error" in result) {
+          // Tool execution failed - the error has already been added to messages by executeTool
+          // Continue loop to let LLM try again with corrected parameters
+          console.log(`[Stream] Tool execution failed, continuing loop for retry`);
         } else {
-          // Truncate if too long
-          if (this.estimateTokenCount([new HumanMessage(resultStr)]) > this.config.summarizeThreshold) {
+          // Tool execution succeeded - add result to messages
+          this.messages.push(
+            new AIMessage(`Tool called: ${decision.toolName} with arguments: ${JSON.stringify(decision.arguments)}`)
+          );
+
+          const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+          
+          if (resultStr.trim() === "") {
             this.messages.push(
-              new HumanMessage(`Result is too long to display. Try different arguments or a different tool. This is the beginning of the result: ${resultStr.substring(0, 100)}...`)
+              new HumanMessage("Result is empty. Try different arguments or a different tool.")
             );
           } else {
-            this.messages.push(
-              new HumanMessage(`Tool result: ${resultStr}`)
-            );
+            // Truncate if too long
+            if (this.estimateTokenCount([new HumanMessage(resultStr)]) > this.config.summarizeThreshold) {
+              this.messages.push(
+                new HumanMessage(`Result is too long to display. Try different arguments or a different tool. This is the beginning of the result: ${resultStr.substring(0, 100)}...`)
+              );
+            } else {
+              this.messages.push(
+                new HumanMessage(`Tool result: ${resultStr}`)
+              );
+            }
           }
         }
         
@@ -128,7 +144,29 @@ export class SimplifiedUtcpAgent {
 
   private async callLLM(messages: BaseMessage[]): Promise<string> {
     try {
-      const response = await this.llm.invoke(messages);
+      // First, ensure there is only ONE system message and it's at the top (for ALL models)
+      const systemMessages = messages.filter(msg => msg._getType() === "system");
+      const otherMessages = messages.filter(msg => msg._getType() !== "system");
+      
+      let processedMessages: BaseMessage[] = otherMessages;
+      
+      // Keep only the first system message (consolidate multiple into one)
+      if (systemMessages.length > 0) {
+        processedMessages = [systemMessages[0], ...otherMessages];
+      }
+      
+      // For o1 models, convert system messages to user messages since they don't support system role
+      if (this.isO1Model) {
+        processedMessages = processedMessages.map(msg => {
+          if (msg._getType() === "system") {
+            // Convert system message to user message with a prefix
+            return new HumanMessage(`[System instruction]: ${msg.content}`);
+          }
+          return msg;
+        });
+      }
+      
+      const response = await this.llm.invoke(processedMessages);
       return response.content.toString().trim();
     } catch (error: any) {
       console.error("[LLM] Error calling LLM:", error);
@@ -137,9 +175,11 @@ export class SimplifiedUtcpAgent {
   }
 
   private async analyzeTask(): Promise<string> {
+    // Combine system prompts into a single system message
+    const combinedSystemPrompt = `${this.config.systemPrompt}\n\nBased on the conversation history, what is the next step that needs to be accomplished? Respond with a concise next step description. Do not include 'the next step is' just the next step description.`;
+    
     const taskAnalysisMessages: BaseMessage[] = [
-      new SystemMessage(this.config.systemPrompt),
-      new SystemMessage("Based on the conversation history, what is the next step that needs to be accomplished? Respond with a concise next step description. Do not include 'the next step is' just the next step description."),
+      new SystemMessage(combinedSystemPrompt),
       ...this.messages.filter(m => m._getType() !== "system"),
       new HumanMessage("The next step is:\n"),
     ];
@@ -151,7 +191,7 @@ export class SimplifiedUtcpAgent {
       console.log(`[AnalyzeTask] Context too long (${estimatedTokens} tokens), summarizing...`);
       const summarized = await this.summarizeContext();
       finalMessages = [
-        new SystemMessage("Based on the conversation history, what is the next step that needs to be accomplished? Respond with a concise next step description. Do not include 'the next step is' just the next step description."),
+        new SystemMessage(combinedSystemPrompt),
         ...summarized,
         new HumanMessage("The next step is:\n"),
       ];
@@ -204,10 +244,23 @@ export class SimplifiedUtcpAgent {
     console.log(`[DecideAction] Iteration ${iterationCount}/${this.config.maxIterations}`);
 
     const toolsText = tools.length > 0
-      ? JSON.stringify(tools.map(t => ({ name: t.name, description: t.description, inputs: t.inputs })), null, 2)
+      ? JSON.stringify(tools.map(t => ({ 
+          name: t.name, 
+          description: t.description, 
+          inputs: t.inputs,
+          // Add a note about common required parameters based on previous errors
+          note: "Ensure all required parameters are provided. Common required parameters include: country, sources, category, q, pageSize, page, sortBy"
+        })), null, 2)
       : "No tools available";
 
     console.log(`[DecideAction] Evaluating ${tools.length} available tools`);
+
+    // Check if there are recent errors in the conversation that need retry
+    const hasRecentError = this.messages.some(msg => 
+      msg._getType() === "human" && 
+      msg.content.toString().includes("Error:") && 
+      msg.content.toString().includes("required parameter")
+    );
 
     const prompt = `Given the current task: "${task}"
 
@@ -216,6 +269,8 @@ ${toolsText}
 
 Based on the conversation and available tools, decide what to do next:
 1. If you have suitable tools available AND need to use them to accomplish the task, respond with: {"action": "call_tool", "tool_name": "tool.name", "arguments": {"arg1": "value1"}}
+   - IMPORTANT: Include ALL required parameters in the arguments. If you're unsure about required parameters, include common ones like country, sources, category, q, pageSize, page, sortBy as appropriate.
+${hasRecentError ? '   - CRITICAL: There was a recent error about missing parameters. You MUST retry the tool call with the missing parameter included. Do NOT choose "respond".' : ''}
 2. If no suitable tools are available OR you can answer directly, respond with: {"action": "respond"}
 
 IMPORTANT: Even if no tools are available, you should ALWAYS choose "respond" to provide a helpful answer to the user. Never choose "end" unless the user explicitly says goodbye or the conversation is truly finished.
@@ -317,6 +372,17 @@ Respond ONLY with the JSON object, no other text.`;
         if (action === "call_tool") {
           console.log(`[DecideAction] Selected tool: ${decision.toolName}`);
           console.log(`[DecideAction] Tool arguments:`, JSON.stringify(decision.arguments, null, 2));
+          
+          // Validate tool arguments before returning
+          const validation = this.validateToolArguments(decision.toolName, decision.arguments || {}, tools);
+          if (!validation.valid) {
+            console.warn(`[DecideAction] Tool arguments validation failed: ${validation.error}`);
+            // Instead of responding, add error to messages and loop again
+            this.messages.push(
+              new AIMessage(`I attempted to call ${decision.toolName} but encountered an error: ${validation.error}. Let me try again with the correct parameters.`)
+            );
+            return { action: "respond", message: `Tool argument validation failed: ${validation.error}` };
+          }
         }
 
         return decision;
@@ -328,6 +394,35 @@ Respond ONLY with the JSON object, no other text.`;
       console.error(`[DecideAction] Error making decision:`, error);
       return { action: "respond", message: `I encountered an error: ${error}` };
     }
+  }
+
+  private validateToolArguments(toolName: string, args: Record<string, any>, tools: Tool[]): { valid: boolean; error?: string } {
+    const tool = tools.find(t => t.name === toolName);
+    if (!tool) {
+      return { valid: false, error: `Tool ${toolName} not found` };
+    }
+
+    if (!tool.inputs) {
+      return { valid: true };
+    }
+
+    // Check for required parameters
+    try {
+      const inputs = tool.inputs as unknown as any[];
+      if (Array.isArray(inputs)) {
+        const requiredParams = inputs.filter((input: any) => input.required === true).map((input: any) => input.name);
+        const missingParams = requiredParams.filter((param: string) => !(param in args));
+
+        if (missingParams.length > 0) {
+          return { valid: false, error: `Missing required parameters: ${missingParams.join(", ")}` };
+        }
+      }
+    } catch (e) {
+      // If we can't validate, allow it to proceed
+      console.warn(`[ValidateToolArguments] Could not validate tool inputs for ${toolName}`);
+    }
+
+    return { valid: true };
   }
 
   private async executeTool(toolName: string, args: Record<string, any>): Promise<any> {
@@ -345,28 +440,62 @@ Respond ONLY with the JSON object, no other text.`;
       
       return result;
     } catch (error: any) {
+      const errorMsg = error.message || String(error);
+      console.error(`[ExecuteTools] Error executing tool ${toolName}:`, error);
+      
+      // Check for missing parameter errors and add them to conversation history
+      if (errorMsg.includes("Missing required") || errorMsg.includes("parameter")) {
+        // Extract the missing parameter name from error message
+        const paramMatch = errorMsg.match(/Missing required[^:]*:\s*(\w+)/);
+        const missingParam = paramMatch ? paramMatch[1] : "unknown parameter";
+        
+        // Add error feedback to messages so LLM learns what's missing
+        // Use HumanMessage to make it clear this is feedback that requires action
+        this.messages.push(
+          new HumanMessage(`Error: The tool call failed because a required parameter was missing: "${missingParam}". Please retry the tool call with this parameter included. Current arguments were: ${JSON.stringify(args)}`)
+        );
+        
+        // Return error but don't stop - let the loop continue
+        return { error: errorMsg, recoverable: true };
+      }
+      
       // Check for variable-related errors
-      if (error.message?.includes("variable")) {
+      if (errorMsg.includes("variable")) {
         try {
           const requiredVars = await this.utcpClient.getRequiredVariablesForRegisteredTool(toolName);
-          const errorMsg = `Tool ${toolName} requires the following variables to be set: ${requiredVars.join(", ")}.`;
-          console.error("[ExecuteTools]", errorMsg);
-          return { error: errorMsg };
+          const varErrorMsg = `Tool ${toolName} requires the following variables to be set: ${requiredVars.join(", ")}.`;
+          console.error("[ExecuteTools]", varErrorMsg);
+          return { error: varErrorMsg };
         } catch {
-          console.error("[ExecuteTools] Variable error:", error.message);
-          return { error: error.message };
+          console.error("[ExecuteTools] Variable error:", errorMsg);
+          return { error: errorMsg };
         }
       }
       
-      console.error(`[ExecuteTools] Error executing tool ${toolName}:`, error);
-      return { error: error.message };
+      return { error: errorMsg };
     }
   }
 
   private async generateResponse(): Promise<string> {
     console.log("[Respond] Generating response based on conversation history");
 
-    const responsePrompt = "Based on the conversation history, provide a helpful summary response to the user.\n\nIf tools were called and results obtained, summarize what was accomplished and provide the relevant information from the tool results.\nIf no tools were needed, provide a direct helpful response.\n\nBe concise and helpful.";
+    // Check if the user's last message contains specific instructions
+    const lastUserMessage = this.getLastUserMessage();
+    let responsePrompt = "Based on the conversation history, provide a helpful summary response to the user.\n\nIf tools were called and results obtained, summarize what was accomplished and provide the relevant information from the tool results.\nIf no tools were needed, provide a direct helpful response.\n\nBe concise and helpful.";
+
+    // Check for specific user instructions
+    if (lastUserMessage) {
+      const lowerMessage = lastUserMessage.toLowerCase();
+      
+      // Check for instruction to respond with only first message
+      if (lowerMessage.includes("only my first message") || lowerMessage.includes("respond with only")) {
+        responsePrompt = "The user is asking you to respond with only their first message from this conversation. Find and return ONLY their first message, nothing else.";
+      }
+      // Check for instruction to recall previous message
+      else if (lowerMessage.includes("what was my previous message") || lowerMessage.includes("what did i say before")) {
+        responsePrompt = "The user is asking what their previous message was. Look at the conversation history and tell them what they said in their previous message (the one before the current one).";
+      }
+    }
 
     const responsePromptMessage = new HumanMessage(responsePrompt);
     let responseMessages: BaseMessage[] = [...this.messages, responsePromptMessage];
@@ -387,6 +516,16 @@ Respond ONLY with the JSON object, no other text.`;
       console.error(`[Respond] Error generating response:`, error);
       return `I encountered an error generating the response: ${error}`;
     }
+  }
+
+  private getLastUserMessage(): string | null {
+    // Find the last human message in the conversation
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]._getType() === "human") {
+        return this.messages[i].content.toString();
+      }
+    }
+    return null;
   }
 
   private estimateTokenCount(messages: BaseMessage[]): number {

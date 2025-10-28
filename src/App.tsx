@@ -12,9 +12,10 @@ import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
 import { createUtcpClientWithAutoVariables } from "@/utils/utcpClientHelper";
 import { ChatOpenAI } from "@langchain/openai";
-import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatAnthropic, type AnthropicInput, type ChatAnthropicCallOptions } from "@langchain/anthropic";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { BaseLanguageModel } from "@langchain/core/language_models/base";
+import type { BaseChatModelParams } from "@langchain/core/language_models/chat_models";
 
 function App() {
   const [agent, setAgent] = useState<SimplifiedUtcpAgent | null>(null);
@@ -64,25 +65,35 @@ function App() {
         
         switch (llmConfig.provider) {
           case "openai":
-            llm = new ChatOpenAI({
+            // o1 and o3 models don't support temperature or maxTokens parameters
+            const isO1Model = llmConfig.model.includes("o1") || llmConfig.model.includes("o3");
+            const openaiConfig: any = {
               modelName: llmConfig.model,
               apiKey: llmConfig.apiKey,
-              temperature: llmConfig.temperature,
-              maxTokens: llmConfig.maxTokens,
               configuration: {
                 baseURL: llmConfig.baseUrl,
                 organization: llmConfig.organizationId,
               },
-            });
+            };
+            
+            // Only add temperature and maxTokens for models that support them
+            if (!isO1Model) {
+              openaiConfig.temperature = llmConfig.temperature;
+              openaiConfig.maxTokens = llmConfig.maxTokens;
+            }
+            
+            llm = new ChatOpenAI(openaiConfig);
             break;
           
           case "anthropic":
-            llm = new ChatAnthropic({
+            const anthropicConfig: AnthropicInput & BaseChatModelParams = {
               modelName: llmConfig.model,
               apiKey: llmConfig.apiKey,
               temperature: llmConfig.temperature,
               maxTokens: llmConfig.maxTokens,
-            });
+            };
+            
+            llm = new ChatAnthropic(anthropicConfig);
             break;
           
           case "google":
