@@ -12,7 +12,7 @@ import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
 import { createUtcpClientWithAutoVariables } from "@/utils/utcpClientHelper";
 import { ChatOpenAI } from "@langchain/openai";
-import { ChatAnthropic, type AnthropicInput, type ChatAnthropicCallOptions } from "@langchain/anthropic";
+import { ChatAnthropic, type AnthropicInput } from "@langchain/anthropic";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { BaseLanguageModel } from "@langchain/core/language_models/base";
 import type { BaseChatModelParams } from "@langchain/core/language_models/chat_models";
