@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { LLMSelector } from "./LLMSelector";
+import { AgentConfig } from "./AgentConfig";
 import { UTCPConfig } from "./UTCPConfig";
 import { CallTemplateList } from "./CallTemplateList";
 import { GripVertical, AlertCircle } from "lucide-react";
@@ -72,6 +73,7 @@ export function Sidebar() {
       <ScrollArea className="flex-1">
         <div className="p-4 space-y-4">
           <LLMSelector />
+          <AgentConfig />
           <UTCPConfig />
           <CallTemplateList />
         </div>

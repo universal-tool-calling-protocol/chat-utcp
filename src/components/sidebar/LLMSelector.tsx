@@ -99,7 +99,7 @@ export function LLMSelector() {
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              ⚠️ API keys are stored in browser localStorage
+              ⚠️ API keys are stored in browser memory
             </p>
           </div>
         )}

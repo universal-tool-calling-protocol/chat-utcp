@@ -18,7 +18,7 @@ import type { BaseLanguageModel } from "@langchain/core/language_models/base";
 import type { BaseMessage } from "@langchain/core/messages";
 import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 
-interface AgentConfig {
+export interface AgentConfig {
   maxIterations?: number;
   maxToolsPerSearch?: number;
   systemPrompt?: string;
@@ -152,7 +152,7 @@ export class SimplifiedUtcpAgent {
       
       // Keep only the first system message (consolidate multiple into one)
       if (systemMessages.length > 0) {
-        processedMessages = [systemMessages[0], ...otherMessages];
+        processedMessages = [...systemMessages, ...otherMessages];
       }
       
       // For o1 models, convert system messages to user messages since they don't support system role

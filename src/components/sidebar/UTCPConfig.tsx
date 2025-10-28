@@ -197,6 +197,10 @@ export function UTCPConfig() {
               </Button>
             </div>
           </div>
+          
+          <p className="text-xs text-muted-foreground">
+            ⚠️ Variables are stored in browser session
+          </p>
         </div>
 
         {/* Advanced Settings */}

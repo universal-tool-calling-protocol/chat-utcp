@@ -5,6 +5,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
 import {
   UtcpClientConfigSerializer,
   type UtcpClientConfig,
@@ -14,9 +15,59 @@ import {
 
 const configSerializer = new UtcpClientConfigSerializer();
 
+// Custom storage that uses sessionStorage for variables (needed for UTCP client initialization)
+// and localStorage for non-sensitive config
+const createHybridUtcpStorage = (): PersistStorage<UtcpConfigStoreState> => ({
+  getItem: (name: string) => {
+    const data = localStorage.getItem(name);
+    if (!data) return null;
+    
+    try {
+      const parsed = JSON.parse(data) as StorageValue<UtcpConfigStoreState>;
+      // Load variables from sessionStorage (needed for UTCP client to work)
+      const variablesData = sessionStorage.getItem(`${name}-variables`);
+      if (variablesData) {
+        try {
+          const variables = JSON.parse(variablesData);
+          if (parsed.state?.configDict) {
+            parsed.state.configDict.variables = variables;
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  },
+  setItem: (name: string, value: StorageValue<UtcpConfigStoreState>) => {
+    try {
+      // Extract variables and store in sessionStorage
+      const variables = value.state?.configDict?.variables || {};
+      sessionStorage.setItem(`${name}-variables`, JSON.stringify(variables));
+      
+      // Store config without variables in localStorage
+      const storageCopy = JSON.parse(JSON.stringify(value)) as StorageValue<UtcpConfigStoreState>;
+      if (storageCopy.state?.configDict) {
+        delete storageCopy.state.configDict.variables;
+      }
+      
+      localStorage.setItem(name, JSON.stringify(storageCopy));
+    } catch (error) {
+      console.error("Error saving to hybrid UTCP storage:", error);
+    }
+  },
+  removeItem: (name: string) => {
+    localStorage.removeItem(name);
+    sessionStorage.removeItem(`${name}-variables`);
+  },
+});
+
 export interface UtcpConfigStoreState {
   // Store config as raw dict (serialized format for localStorage)
   configDict: Record<string, unknown>;
+  isHydrated: boolean;
   
   // Actions
   getConfig: () => UtcpClientConfig;
@@ -54,6 +105,7 @@ export const useUtcpConfigStore = create<UtcpConfigStoreState>()(
   persist(
     (set, get) => ({
       configDict: getDefaultConfigDict(),
+      isHydrated: false,
 
       getConfig: () => {
         const { configDict } = get();
@@ -135,6 +187,12 @@ export const useUtcpConfigStore = create<UtcpConfigStoreState>()(
     }),
     {
       name: "utcp-config-storage",
+      storage: createHybridUtcpStorage(),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.isHydrated = true;
+        }
+      },
     }
   )
 );

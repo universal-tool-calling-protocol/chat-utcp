@@ -9,6 +9,7 @@ import { Chat } from "@/components/chat/Chat";
 import { useChatStore } from "@/stores/chatStore";
 import { useLLMStore } from "@/stores/llmStore";
 import { useUtcpConfigStore } from "@/stores/utcpConfigStore";
+import { useAgentConfigStore } from "@/stores/agentConfigStore";
 import { SimplifiedUtcpAgent } from "@/agent/SimplifiedUtcpAgent";
 import { createUtcpClientWithAutoVariables } from "@/utils/utcpClientHelper";
 import { ChatOpenAI } from "@langchain/openai";
@@ -23,7 +24,8 @@ function App() {
   
   const { addMessage, setStreaming, setCurrentStreamingMessage, updateAgentMetadata } = useChatStore();
   const { config: llmConfig, isHydrated } = useLLMStore();
-  const { getConfig: getClientConfig, configDict, addVariable } = useUtcpConfigStore();
+  const { getConfig: getClientConfig, configDict, addVariable, isHydrated: utcpConfigHydrated } = useUtcpConfigStore();
+  const { config: agentConfig, isHydrated: agentConfigHydrated } = useAgentConfigStore();
 
   // Initialize UTCP client and agent when config changes
   useEffect(() => {
@@ -31,8 +33,8 @@ function App() {
       try {
         setError(null);
         
-        // Wait for store to hydrate from localStorage
-        if (!isHydrated) {
+        // Wait for stores to hydrate from localStorage and sessionStorage
+        if (!isHydrated || !agentConfigHydrated || !utcpConfigHydrated) {
           return;
         }
         
@@ -126,12 +128,7 @@ function App() {
         const newAgent = new SimplifiedUtcpAgent(
           llm,
           client,
-          {
-            maxIterations: 5,
-            maxToolsPerSearch: 10,
-            systemPrompt: "You are a helpful AI assistant with access to tools through UTCP.",
-            summarizeThreshold: 80000,
-          }
+          agentConfig
         );
         
         setAgent(newAgent);
@@ -144,6 +141,8 @@ function App() {
     initializeAgent();
   }, [
     isHydrated,
+    agentConfigHydrated,
+    utcpConfigHydrated,
     llmConfig.provider,
     llmConfig.model,
     llmConfig.apiKey,
@@ -151,8 +150,12 @@ function App() {
     llmConfig.organizationId,
     llmConfig.temperature,
     llmConfig.maxTokens,
+    agentConfig.maxIterations,
+    agentConfig.maxToolsPerSearch,
+    agentConfig.systemPrompt,
+    agentConfig.summarizeThreshold,
     configDict,
-  ]); // Re-init when LLM parameters or UTCP config changes
+  ]); // Re-init when LLM parameters, agent config, or UTCP config changes
 
   const handleSendMessage = async (message: string) => {
     if (!agent) {
